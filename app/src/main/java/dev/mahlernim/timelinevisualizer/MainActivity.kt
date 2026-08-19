@@ -154,12 +154,13 @@ class MainActivity : AppCompatActivity() {
     private var rememberedTimelineLoaded = false
     private var interruptedTimelineRecovered = false
     private var lastRenderedExportStatus = VideoExportStatus.IDLE
-    private var exportInProgress = false
     private var videoPlayer: ExoPlayer? = null
     private var playerUri: Uri? = null
     private var playerPositionMs = 0L
     private var playerPlayWhenReady = true
     private var syncingBottomNavigation = false
+    private var exportingVideo = false
+    private var pendingImportCompletionUri: Uri? = null
 
     private val openTimeline = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) importTimeline(uri)
@@ -305,6 +306,7 @@ class MainActivity : AppCompatActivity() {
         makeDropdownOpenReliably(editor.durationDropdown)
         configureAdvancedSettings()
         configureLocationFiltering()
+        configureCameraPreparation()
         configureMonthDropdowns()
         configureExactDates()
         renderVideos()
@@ -324,9 +326,19 @@ class MainActivity : AppCompatActivity() {
             requestTimelineImport(incoming)
         } else when (savedInstanceState?.getString(STATE_SCREEN)) {
             Screen.NEW_VIDEO.name -> showNewVideo(loadRemembered = true)
+            Screen.VIDEOS.name -> showVideos()
             Screen.SETTINGS.name -> showSettings()
             Screen.PLAYER.name -> playerUri?.let { showVideoPlayer(it, resetPosition = false) } ?: showVideos()
-            else -> showVideos()
+            else -> showDefaultLaunchScreen()
+        }
+    }
+
+    private fun showDefaultLaunchScreen() {
+        val exportInProgress = VideoExportCoordinator.state.value.status == VideoExportStatus.RUNNING
+        if (videoStore.list().isEmpty() && !exportInProgress) {
+            showNewVideo(loadRemembered = true)
+        } else {
+            showVideos()
         }
     }
 
@@ -502,13 +514,14 @@ class MainActivity : AppCompatActivity() {
         fallback = getString(R.string.default_title),
     )
 
-    private fun importTimeline(uri: Uri, remembered: Boolean = false) {
+    internal fun importTimeline(uri: Uri, remembered: Boolean = false) {
         if (importJob?.isActive == true) return
         timelineRebuildGeneration += 1
         timelineRebuildJob?.cancel()
         timelineRebuildJob = null
         if (!remembered) interruptedTimelineRecovered = false
         timelineSourceStore.beginImport(uri)
+        pendingImportCompletionUri = null
         animation?.cancel()
         editor.editorGroup.visibility = View.GONE
         setTimelineLoading(true, R.string.opening_timeline)
@@ -536,18 +549,17 @@ class MainActivity : AppCompatActivity() {
                 availablePrivacyCities = prepared.availablePrivacyCities
                 updatePrivateAreasSummary()
                 editor.privateAreasButton.isEnabled = true
-                editor.timelineView.runAfterNextFrameRendered {
-                    timelineSourceStore.completeImport(uri)
-                }
+                pendingImportCompletionUri = uri
                 configureYears(loaded, prepared.initialJourney, prepared.ignoredCount)
                 editor.editorGroup.visibility = View.VISIBLE
-                editor.statusText.text = ""
+                updateCameraPreparationUi()
                 if (!remembered) rememberTimelineSource(uri)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: TimelineParseException) {
                 Log.e(TAG, "Timeline import failed", error)
                 timelineSourceStore.completeImport(uri)
+                pendingImportCompletionUri = null
                 timeline = null
                 renderTimeline = null
                 availablePrivacyCities = emptyList()
@@ -564,6 +576,7 @@ class MainActivity : AppCompatActivity() {
             } catch (error: Exception) {
                 Log.e(TAG, "Timeline import failed", error)
                 timelineSourceStore.completeImport(uri)
+                pendingImportCompletionUri = null
                 timeline = null
                 renderTimeline = null
                 availablePrivacyCities = emptyList()
@@ -586,6 +599,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun timelineParseMessage(reason: TimelineParseReason): Int = when (reason) {
         TimelineParseReason.MALFORMED_JSON -> R.string.timeline_error_malformed
+        TimelineParseReason.EMPTY_EXPORT -> R.string.timeline_error_no_locations
         TimelineParseReason.LEGACY_FORMAT -> R.string.timeline_error_legacy
         TimelineParseReason.RAW_SIGNALS_ONLY -> R.string.timeline_error_raw_only
         TimelineParseReason.NO_USABLE_LOCATIONS -> R.string.timeline_error_no_locations
@@ -595,7 +609,7 @@ class MainActivity : AppCompatActivity() {
     private fun setTimelineLoading(loading: Boolean, stage: Int = R.string.opening_timeline) {
         editor.loadingGroup.visibility = if (loading) View.VISIBLE else View.GONE
         if (loading) editor.loadingStageText.setText(stage)
-        val editingEnabled = !loading && !exportInProgress
+        val editingEnabled = !loading && !exportingVideo
         editor.importButton.isEnabled = editingEnabled
         editor.safeSharingSwitch.isEnabled = editingEnabled && timeline != null
         editor.privateAreasButton.isEnabled = editingEnabled && timeline != null
@@ -607,9 +621,11 @@ class MainActivity : AppCompatActivity() {
         editor.endMonthDropdown.isEnabled = editingEnabled
         editor.exactDateSwitch.isEnabled = editingEnabled
         editor.exactDateRangeButton.isEnabled = editingEnabled
-        val canCreate = editingEnabled && renderTimeline != null && journey?.let(::canCreateVideo) == true
+        val cameraReady = editor.timelineView.isCameraReady
+        val canCreate = editingEnabled && cameraReady && renderTimeline != null && journey?.let(::canCreateVideo) == true
         editor.playButton.isEnabled = canCreate
         editor.exportButton.isEnabled = canCreate
+        editor.timelineSeek.isEnabled = editingEnabled && cameraReady
         settingsScreen.locationFilterDropdown.isEnabled = editingEnabled
     }
 
@@ -709,9 +725,7 @@ class MainActivity : AppCompatActivity() {
         showProgress(0f)
         editor.videoReadyGroup.visibility = View.GONE
         editor.periodSummaryText.text = selectedPeriodSummary(selected, ignoredCount)
-        val canCreate = canCreateVideo(selected)
-        editor.playButton.isEnabled = canCreate
-        editor.exportButton.isEnabled = canCreate
+        updateCameraPreparationUi()
     }
 
     internal fun selectedPeriodSummary(selected: Journey, ignoredCount: Int = 0): String {
@@ -1009,6 +1023,37 @@ class MainActivity : AppCompatActivity() {
         }
         locationFilterMode = locationFilterPreferences.load()
         updateLocationFilterLabel()
+    }
+
+    private fun configureCameraPreparation() {
+        editor.timelineView.onCameraPreparationChanged = { ready ->
+            if (ready) {
+                editor.timelineView.runAfterNextFrameRendered {
+                    pendingImportCompletionUri?.let(timelineSourceStore::completeImport)
+                    pendingImportCompletionUri = null
+                }
+            }
+            updateCameraPreparationUi()
+        }
+        editor.timelineView.onCameraPreparationFailed = { error ->
+            Log.e(TAG, "Timeline camera preparation failed", error)
+            editor.statusText.setText(R.string.import_failed_detail)
+        }
+    }
+
+    private fun updateCameraPreparationUi() {
+        val selected = journey
+        val ready = editor.timelineView.isCameraReady
+        val editingEnabled = !exportingVideo && !editor.loadingGroup.isVisible
+        val canCreate = editingEnabled && selected?.let(::canCreateVideo) == true && ready
+        editor.playButton.isEnabled = canCreate
+        editor.exportButton.isEnabled = canCreate
+        editor.timelineSeek.isEnabled = editingEnabled && ready
+        if (selected != null && !ready && editingEnabled) {
+            editor.statusText.setText(R.string.preparing_preview)
+        } else if (editor.statusText.text?.toString() == getString(R.string.preparing_preview)) {
+            editor.statusText.text = ""
+        }
     }
 
     private fun updateLocationFilterLabel() {
@@ -1489,10 +1534,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setExporting(exporting: Boolean) {
-        exportInProgress = exporting
+        exportingVideo = exporting
         val loading = editor.loadingGroup.isVisible
         val editingEnabled = !exporting && !loading
-        val canCreate = editingEnabled && renderTimeline != null && journey?.let(::canCreateVideo) == true
+        val canCreate = editingEnabled && editor.timelineView.isCameraReady &&
+            renderTimeline != null && journey?.let(::canCreateVideo) == true
         editor.exportProgress.visibility = if (exporting) View.VISIBLE else View.GONE
         editor.cancelExportButton.visibility = if (exporting) View.VISIBLE else View.GONE
         home.deleteAllVideosButton.isEnabled = !exporting
@@ -1525,6 +1571,7 @@ class MainActivity : AppCompatActivity() {
         settingsScreen.locationFilterDropdown.isEnabled = editingEnabled
         settingsScreen.resetAdvancedSettingsButton.isEnabled = !exporting
         if (exporting) editor.videoReadyGroup.visibility = View.GONE
+        if (!exporting) updateCameraPreparationUi()
     }
 
     private fun prepareAnotherVideo() {
