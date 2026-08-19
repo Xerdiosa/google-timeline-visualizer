@@ -11,8 +11,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.AutoCompleteTextView
+import android.widget.ListView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.widget.SearchView
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -20,6 +22,7 @@ import com.google.android.material.button.MaterialButton
 import androidx.test.core.app.ApplicationProvider
 import dev.mahlernim.timelinevisualizer.videos.VideoRecord
 import dev.mahlernim.timelinevisualizer.videos.VideoStore
+import dev.mahlernim.timelinevisualizer.data.PublicPlace
 import dev.mahlernim.timelinevisualizer.data.TimelineSourceStore
 import dev.mahlernim.timelinevisualizer.export.VideoExportCoordinator
 import dev.mahlernim.timelinevisualizer.export.VideoExportSnapshot
@@ -158,6 +161,55 @@ class MainActivityTest {
     }
 
     @Test
+    fun privateAreaSearchIsTrimmedAndCaseInsensitive() {
+        val cities = listOf(
+            privacyCity("sg", "Singapore (SG)"),
+            privacyCity("id", "Pekanbaru (ID)"),
+            privacyCity("kr", "Seoul (KR)"),
+        )
+
+        assertEquals(
+            listOf("Pekanbaru (ID)"),
+            MainActivity.filterPrivacyCities(cities, "  pekAN  ").map(PublicPlace::label),
+        )
+        assertEquals(cities, MainActivity.filterPrivacyCities(cities, " "))
+        assertTrue(MainActivity.filterPrivacyCities(cities, "Tokyo").isEmpty())
+    }
+
+    @Test
+    fun safeSharingRequiresALoadedTimeline() {
+        val activity = launchActivity()
+        activity.findViewById<View>(R.id.navigationCreate).performClick()
+
+        assertEquals(false, activity.findViewById<View>(R.id.safeSharingSwitch).isEnabled)
+        assertEquals(false, activity.findViewById<View>(R.id.safeSharingSwitch).isShown)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.privateAreaControls).visibility)
+    }
+
+    @Test
+    fun privateAreaDialogFiltersCitiesDiscoveredInTimeline() {
+        acceptPrivacyDisclosure()
+        val source = Uri.fromFile(repoRoot().resolve("test-fixtures/seoul-bohol-sample.json"))
+        val activity = launchActivity(Intent(Intent.ACTION_VIEW, source))
+        waitUntil { activity.findViewById<View>(R.id.editorGroup).visibility == View.VISIBLE }
+
+        activity.findViewById<View>(R.id.privateAreasButton).performClick()
+        val dialog = ShadowDialog.getLatestDialog() as AlertDialog
+        val search = dialog.findViewById<SearchView>(R.id.privateAreasSearch)!!
+        val list = dialog.findViewById<ListView>(R.id.privateAreasList)!!
+
+        assertEquals(2, list.adapter.count)
+        search.setQuery("Singapore", false)
+        assertTrue((0 until list.adapter.count).map {
+            list.adapter.getItem(it).toString()
+        }.contains("Singapore (SG)"))
+
+        search.setQuery("missing", false)
+        assertEquals(View.GONE, list.visibility)
+        assertEquals(View.VISIBLE, dialog.findViewById<View>(R.id.privateAreasEmptyText)!!.visibility)
+    }
+
+    @Test
     @Config(sdk = [35], qualifiers = "ja-w360dp-h640dp-xxhdpi")
     fun restorationLinkFitsTheSmallestJapaneseLayout() {
         val activity = launchActivity()
@@ -211,6 +263,28 @@ class MainActivityTest {
         controller.pause().stop().destroy()
 
         assertEquals(VideoExportStatus.RUNNING, VideoExportStateStore(context).load().status)
+    }
+
+    @Test
+    fun runningExportDisablesPrivacyAndFilterChanges() {
+        acceptPrivacyDisclosure()
+        val source = Uri.fromFile(repoRoot().resolve("test-fixtures/seoul-bohol-sample.json"))
+        val activity = launchActivity(Intent(Intent.ACTION_VIEW, source))
+        waitUntil {
+            activity.findViewById<View>(R.id.editorGroup).visibility == View.VISIBLE &&
+                activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE
+        }
+
+        VideoExportCoordinator.publish(
+            context,
+            VideoExportSnapshot(status = VideoExportStatus.RUNNING, startedAtMillis = 123L),
+        )
+        waitUntil { activity.findViewById<View>(R.id.cancelExportButton).visibility == View.VISIBLE }
+
+        assertEquals(false, activity.findViewById<View>(R.id.safeSharingSwitch).isEnabled)
+        assertEquals(false, activity.findViewById<View>(R.id.privateAreasButton).isEnabled)
+        assertEquals(false, activity.findViewById<View>(R.id.privateAreaRadiusDropdown).isEnabled)
+        assertEquals(false, activity.findViewById<View>(R.id.locationFilterDropdown).isEnabled)
     }
 
     @Test
@@ -302,6 +376,10 @@ class MainActivityTest {
         val dropdown = activity.findViewById<AutoCompleteTextView>(R.id.locationFilterDropdown)
         dropdown.onItemClickListener?.onItemClick(null, null, 1, 1L)
         activity.findViewById<View>(R.id.navigationCreate).performClick()
+        waitUntil {
+            activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE &&
+                summary.text.contains("3")
+        }
 
         assertTrue(
             !summary.text.contains(
@@ -309,6 +387,98 @@ class MainActivityTest {
             ),
         )
         assertTrue(summary.text.contains("3"))
+    }
+
+    @Test
+    fun disablingLocationFilterRefreshesAvailablePrivateCities() {
+        acceptPrivacyDisclosure()
+        val source = Uri.fromFile(repoRoot().resolve("test-fixtures/private-city-outlier-sample.json"))
+        val activity = launchActivity(Intent(Intent.ACTION_VIEW, source))
+        waitUntil {
+            activity.findViewById<View>(R.id.editorGroup).visibility == View.VISIBLE &&
+                activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE
+        }
+        activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(
+            R.id.safeSharingSwitch,
+        ).isChecked = true
+        waitUntil { activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE }
+
+        activity.findViewById<View>(R.id.privateAreasButton).performClick()
+        val initialDialog = ShadowDialog.getLatestDialog() as AlertDialog
+        val initialList = initialDialog.findViewById<ListView>(R.id.privateAreasList)!!
+        assertEquals(listOf("Seoul (KR)"), (0 until initialList.adapter.count).map {
+            initialList.adapter.getItem(it).toString()
+        })
+        initialDialog.dismiss()
+
+        activity.findViewById<View>(R.id.navigationSettings).performClick()
+        val dropdown = activity.findViewById<AutoCompleteTextView>(R.id.locationFilterDropdown)
+        dropdown.onItemClickListener?.onItemClick(null, null, 1, 1L)
+        waitUntil { activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE }
+        activity.findViewById<View>(R.id.navigationCreate).performClick()
+        activity.findViewById<View>(R.id.privateAreasButton).performClick()
+
+        val refreshedDialog = ShadowDialog.getLatestDialog() as AlertDialog
+        val refreshedList = refreshedDialog.findViewById<ListView>(R.id.privateAreasList)!!
+        assertEquals(
+            listOf("Seoul (KR)", "Thomson (SG)"),
+            (0 until refreshedList.adapter.count).map { refreshedList.adapter.getItem(it).toString() },
+        )
+    }
+
+    @Test
+    fun togglingSafeSharingShowsProgressWhileTimelineRebuilds() {
+        acceptPrivacyDisclosure()
+        val source = Uri.fromFile(repoRoot().resolve("test-fixtures/seoul-bohol-sample.json"))
+        val activity = launchActivity(Intent(Intent.ACTION_VIEW, source))
+        waitUntil {
+            activity.findViewById<View>(R.id.editorGroup).visibility == View.VISIBLE &&
+                activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE
+        }
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.privateAreaControls).visibility)
+
+        val safeSharingSwitch = activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(
+            R.id.safeSharingSwitch,
+        )
+        assertEquals(true, safeSharingSwitch.isShown)
+        safeSharingSwitch.isChecked = true
+
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.privateAreaControls).visibility)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.loadingGroup).visibility)
+        assertEquals(false, activity.findViewById<View>(R.id.playButton).isEnabled)
+        assertEquals(
+            activity.getString(R.string.preparing_trips),
+            activity.findViewById<TextView>(R.id.loadingStageText).text.toString(),
+        )
+        waitUntil { activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE }
+        assertEquals(true, activity.findViewById<View>(R.id.playButton).isEnabled)
+
+        safeSharingSwitch.isChecked = false
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.privateAreaControls).visibility)
+    }
+
+    @Test
+    fun timelineControlsStayDisabledForSinglePointJourneyAfterRebuild() {
+        acceptPrivacyDisclosure()
+        val source = Uri.fromFile(repoRoot().resolve("test-fixtures/single-point-sample.json"))
+        val activity = launchActivity(Intent(Intent.ACTION_VIEW, source))
+        waitUntil {
+            activity.findViewById<View>(R.id.editorGroup).visibility == View.VISIBLE &&
+                activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE
+        }
+
+        val safeSharingSwitch = activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(
+            R.id.safeSharingSwitch,
+        )
+        assertEquals(true, safeSharingSwitch.isEnabled)
+        assertEquals(false, activity.findViewById<View>(R.id.playButton).isEnabled)
+        assertEquals(false, activity.findViewById<View>(R.id.exportButton).isEnabled)
+
+        safeSharingSwitch.isChecked = true
+        waitUntil { activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE }
+
+        assertEquals(false, activity.findViewById<View>(R.id.playButton).isEnabled)
+        assertEquals(false, activity.findViewById<View>(R.id.exportButton).isEnabled)
     }
 
     @Test
@@ -696,6 +866,12 @@ class MainActivityTest {
         }
         return current
     }
+
+    private fun privacyCity(id: String, label: String) = PublicPlace(
+        id = id,
+        label = label,
+        point = GeoPoint(Instant.EPOCH, 0.0, 0.0),
+    )
 
     private fun launchActivity(intent: Intent? = null): MainActivity {
         controller = if (intent == null) {

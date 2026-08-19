@@ -35,6 +35,18 @@ After a successful Timeline import, the app stores only the selected document UR
 so it can request access to the same document on the next launch. Replacing the
 selection replaces this URI. The Timeline contents are not duplicated.
 
+Safe sharing mode changes only the in-memory route used for preview and video
+rendering. The user selects private cities found in the loaded Timeline or searches
+the bundled offline city index. Coordinates within the selected 10, 25, 50, or 100
+km radius of those city centers are replaced
+with the public city center, while route points outside selected areas remain
+unchanged. Segments identified as `FLYING` in
+the Timeline export remain unchanged, including inside protected areas. Selected
+city IDs are stored locally in app preferences. Safe sharing does not modify, copy,
+upload, or export the selected Timeline JSON.
+Locations outside selected private areas remain precise and may reveal sensitive
+visits, so users should review the full preview before sharing.
+
 On Android 13 and newer, the app may request notification permission so it can
 show video progress and a completion alert. Declining this permission does not
 stop video creation and does not grant access to any personal data.
@@ -83,3 +95,9 @@ privacy practices apply to tile requests:
 
 - [CARTO privacy notice](https://carto.com/privacy/)
 - [OpenStreetMap privacy policy](https://osmfoundation.org/wiki/Privacy_Policy)
+
+## Third-party location data
+
+Safe sharing mode includes city-center data from
+[GeoNames](https://www.geonames.org/) under the
+[Creative Commons Attribution 4.0 License](https://creativecommons.org/licenses/by/4.0/).

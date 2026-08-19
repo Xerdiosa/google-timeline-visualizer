@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp">
+
+    <androidx.appcompat.widget.SearchView
+        android:id="@+id/privateAreasSearch"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:iconifiedByDefault="false"
+        android:queryHint="@string/search_private_areas" />
+
+    <TextView
+        android:id="@+id/privateAreasEmptyText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingTop="32dp"
+        android:paddingBottom="32dp"
+        android:text="@string/private_areas_no_results"
+        android:textAppearance="?attr/textAppearanceBodyMedium"
+        android:visibility="gone" />
+
+    <ListView
+        android:id="@+id/privateAreasList"
+        android:layout_width="match_parent"
+        android:layout_height="360dp"
+        android:choiceMode="multipleChoice"
+        android:clipToPadding="false"
+        android:paddingBottom="8dp"
+        android:scrollbarStyle="outsideOverlay" />
+
+</LinearLayout>

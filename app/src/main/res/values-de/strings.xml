@@ -137,6 +137,17 @@
     <string name="timeline_file">Timeline-Datei</string>
     <string name="choose_file">Datei auswählen</string>
     <string name="get_timeline_file">Holen Sie sich die Timeline-Datei</string>
+    <string name="safe_sharing_mode">Sicherer Freigabemodus</string>
+    <string name="safe_sharing_summary">Nur ausgewählte private Bereiche werden anonymisiert. Alle anderen Routen bleiben genau und Flugabschnitte unverändert.</string>
+    <string name="private_areas">Private Bereiche</string>
+    <string name="private_areas_none">Keine privaten Bereiche ausgewählt</string>
+    <string name="private_areas_selected">Geschützt: %1$s</string>
+    <string name="private_areas_empty">In dieser Timeline wurden keine Städte gefunden.</string>
+    <string name="search_private_areas">Städte suchen</string>
+    <string name="private_areas_no_results">Keine passenden Städte gefunden.</string>
+    <string name="timeline_rebuild_failed">Timeline-Einstellungen konnten nicht angewendet werden. Versuchen Sie es erneut.</string>
+    <string name="private_area_radius">Privatsphärenradius</string>
+    <string name="private_area_radius_value">%1$d km</string>
     <string name="selected_period">Ausgewählter Zeitraum</string>
     <string name="video_details">Videodetails</string>
     <string name="journey">Reise</string>

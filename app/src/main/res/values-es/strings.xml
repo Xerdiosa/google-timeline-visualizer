@@ -141,6 +141,17 @@
     <string name="timeline_file">Archivo Timeline</string>
     <string name="choose_file">Elige el archivo</string>
     <string name="get_timeline_file">Obtener el archivo Timeline</string>
+    <string name="safe_sharing_mode">Modo para compartir de forma segura</string>
+    <string name="safe_sharing_summary">Solo se anonimizan las áreas privadas seleccionadas. Las demás rutas conservan su precisión y los tramos de vuelo no se modifican.</string>
+    <string name="private_areas">Áreas privadas</string>
+    <string name="private_areas_none">No hay áreas privadas seleccionadas</string>
+    <string name="private_areas_selected">Protegidas: %1$s</string>
+    <string name="private_areas_empty">No se encontraron ciudades en este Timeline.</string>
+    <string name="search_private_areas">Buscar ciudades</string>
+    <string name="private_areas_no_results">No se encontraron ciudades coincidentes.</string>
+    <string name="timeline_rebuild_failed">No se pudo aplicar la configuración de Timeline. Inténtalo de nuevo.</string>
+    <string name="private_area_radius">Radio de privacidad</string>
+    <string name="private_area_radius_value">%1$d km</string>
     <string name="selected_period">Periodo seleccionado</string>
     <string name="video_details">Detalles del vídeo</string>
     <string name="journey">Viaje</string>

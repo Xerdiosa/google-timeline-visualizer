@@ -133,6 +133,17 @@
     <string name="timeline_file">Timeline 文件</string>
     <string name="choose_file">选择文件</string>
     <string name="get_timeline_file">获取Timeline文件</string>
+    <string name="safe_sharing_mode">安全分享模式</string>
+    <string name="safe_sharing_summary">仅匿名化所选的私密区域，其他路线保持准确，飞行区段保持不变。</string>
+    <string name="private_areas">私密区域</string>
+    <string name="private_areas_none">未选择私密区域</string>
+    <string name="private_areas_selected">已保护：%1$s</string>
+    <string name="private_areas_empty">此 Timeline 中未找到城市。</string>
+    <string name="search_private_areas">搜索城市</string>
+    <string name="private_areas_no_results">未找到匹配的城市。</string>
+    <string name="timeline_rebuild_failed">无法应用 Timeline 设置，请重试。</string>
+    <string name="private_area_radius">私密区域半径</string>
+    <string name="private_area_radius_value">%1$d km</string>
     <string name="selected_period">所选期间</string>
     <string name="video_details">视频详情</string>
     <string name="journey">旅行</string>

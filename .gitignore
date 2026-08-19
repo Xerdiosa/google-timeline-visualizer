@@ -5,6 +5,8 @@
 *.iml
 *.jks
 *.keystore
+*.apk
+*.aab
 Timeline.json
 *.mp4
 __pycache__/
