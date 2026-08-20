@@ -11,11 +11,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.AutoCompleteTextView
-import android.widget.ListView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.widget.SearchView
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -25,7 +23,6 @@ import com.google.android.material.progressindicator.LinearProgressIndicator
 import androidx.test.core.app.ApplicationProvider
 import dev.mahlernim.timelinevisualizer.videos.VideoRecord
 import dev.mahlernim.timelinevisualizer.videos.VideoStore
-import dev.mahlernim.timelinevisualizer.data.PublicPlace
 import dev.mahlernim.timelinevisualizer.data.TimelineSourceStore
 import dev.mahlernim.timelinevisualizer.export.VideoExportCoordinator
 import dev.mahlernim.timelinevisualizer.export.ExportPhase
@@ -36,6 +33,8 @@ import dev.mahlernim.timelinevisualizer.export.VideoExportStatus
 import dev.mahlernim.timelinevisualizer.model.GeoPoint
 import dev.mahlernim.timelinevisualizer.model.Journey
 import dev.mahlernim.timelinevisualizer.model.TimelinePeriod
+import dev.mahlernim.timelinevisualizer.privacy.PrivacyArea
+import dev.mahlernim.timelinevisualizer.privacy.PrivacyAreaStore
 import dev.mahlernim.timelinevisualizer.render.VideoQuality
 import dev.mahlernim.timelinevisualizer.render.DistanceUnit
 import dev.mahlernim.timelinevisualizer.render.DistanceUnitPreference
@@ -75,6 +74,7 @@ class MainActivityTest {
         context.getSharedPreferences("camera-settings", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("timeline-filter-settings", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("distance-unit-settings", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("safe_sharing_areas", Context.MODE_PRIVATE).edit().clear().commit()
         timelineSourceStore.clearForTest()
     }
 
@@ -190,22 +190,6 @@ class MainActivityTest {
     }
 
     @Test
-    fun privateAreaSearchIsTrimmedAndCaseInsensitive() {
-        val cities = listOf(
-            privacyCity("sg", "Singapore (SG)"),
-            privacyCity("id", "Pekanbaru (ID)"),
-            privacyCity("kr", "Seoul (KR)"),
-        )
-
-        assertEquals(
-            listOf("Pekanbaru (ID)"),
-            MainActivity.filterPrivacyCities(cities, "  pekAN  ").map(PublicPlace::label),
-        )
-        assertEquals(cities, MainActivity.filterPrivacyCities(cities, " "))
-        assertTrue(MainActivity.filterPrivacyCities(cities, "Tokyo").isEmpty())
-    }
-
-    @Test
     fun safeSharingRequiresALoadedTimeline() {
         val activity = launchActivity()
         activity.findViewById<View>(R.id.navigationCreate).performClick()
@@ -216,26 +200,31 @@ class MainActivityTest {
     }
 
     @Test
-    fun privateAreaDialogFiltersCitiesDiscoveredInTimeline() {
+    fun privateAreaButtonOpensMapEditorAndSavesNamedCircle() {
         acceptPrivacyDisclosure()
         val source = Uri.fromFile(repoRoot().resolve("test-fixtures/seoul-bohol-sample.json"))
         val activity = launchActivity(Intent(Intent.ACTION_VIEW, source))
-        waitUntil { activity.findViewById<View>(R.id.editorGroup).visibility == View.VISIBLE }
+        waitUntil {
+            activity.findViewById<View>(R.id.editorGroup).visibility == View.VISIBLE &&
+                activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE
+        }
+        activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(
+            R.id.safeSharingSwitch,
+        ).isChecked = true
+        waitUntil { activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE }
 
         activity.findViewById<View>(R.id.privateAreasButton).performClick()
-        val dialog = ShadowDialog.getLatestDialog() as AlertDialog
-        val search = dialog.findViewById<SearchView>(R.id.privateAreasSearch)!!
-        val list = dialog.findViewById<ListView>(R.id.privateAreasList)!!
+        val dialog = ShadowDialog.getLatestDialog()
+        assertEquals(View.VISIBLE, dialog.findViewById<View>(R.id.privacyMap)!!.visibility)
+        dialog.findViewById<TextView>(R.id.privacyAreaNameInput)!!.text = "Home"
+        dialog.findViewById<View>(R.id.privacySaveButton)!!.performClick()
 
-        assertEquals(2, list.adapter.count)
-        search.setQuery("Singapore", false)
-        assertTrue((0 until list.adapter.count).map {
-            list.adapter.getItem(it).toString()
-        }.contains("Singapore (SG)"))
-
-        search.setQuery("missing", false)
-        assertEquals(View.GONE, list.visibility)
-        assertEquals(View.VISIBLE, dialog.findViewById<View>(R.id.privateAreasEmptyText)!!.visibility)
+        waitUntil { activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE }
+        assertTrue(activity.findViewById<TextView>(R.id.privateAreasSummaryText).text.contains("Home"))
+        assertEquals(
+            activity.getString(R.string.manage_private_areas),
+            activity.findViewById<MaterialButton>(R.id.privateAreasButton).text,
+        )
     }
 
     @Test
@@ -312,7 +301,6 @@ class MainActivityTest {
 
         assertEquals(false, activity.findViewById<View>(R.id.safeSharingSwitch).isEnabled)
         assertEquals(false, activity.findViewById<View>(R.id.privateAreasButton).isEnabled)
-        assertEquals(false, activity.findViewById<View>(R.id.privateAreaRadiusDropdown).isEnabled)
         assertEquals(false, activity.findViewById<View>(R.id.locationFilterDropdown).isEnabled)
     }
 
@@ -494,43 +482,6 @@ class MainActivityTest {
     }
 
     @Test
-    fun disablingLocationFilterRefreshesAvailablePrivateCities() {
-        acceptPrivacyDisclosure()
-        val source = Uri.fromFile(repoRoot().resolve("test-fixtures/private-city-outlier-sample.json"))
-        val activity = launchActivity(Intent(Intent.ACTION_VIEW, source))
-        waitUntil {
-            activity.findViewById<View>(R.id.editorGroup).visibility == View.VISIBLE &&
-                activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE
-        }
-        activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(
-            R.id.safeSharingSwitch,
-        ).isChecked = true
-        waitUntil { activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE }
-
-        activity.findViewById<View>(R.id.privateAreasButton).performClick()
-        val initialDialog = ShadowDialog.getLatestDialog() as AlertDialog
-        val initialList = initialDialog.findViewById<ListView>(R.id.privateAreasList)!!
-        assertEquals(listOf("Seoul (KR)"), (0 until initialList.adapter.count).map {
-            initialList.adapter.getItem(it).toString()
-        })
-        initialDialog.dismiss()
-
-        activity.findViewById<View>(R.id.navigationSettings).performClick()
-        val dropdown = activity.findViewById<AutoCompleteTextView>(R.id.locationFilterDropdown)
-        dropdown.onItemClickListener?.onItemClick(null, null, 1, 1L)
-        waitUntil { activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE }
-        activity.findViewById<View>(R.id.navigationCreate).performClick()
-        activity.findViewById<View>(R.id.privateAreasButton).performClick()
-
-        val refreshedDialog = ShadowDialog.getLatestDialog() as AlertDialog
-        val refreshedList = refreshedDialog.findViewById<ListView>(R.id.privateAreasList)!!
-        assertEquals(
-            listOf("Seoul (KR)", "Thomson (SG)"),
-            (0 until refreshedList.adapter.count).map { refreshedList.adapter.getItem(it).toString() },
-        )
-    }
-
-    @Test
     fun togglingSafeSharingShowsProgressWhileTimelineRebuilds() {
         acceptPrivacyDisclosure()
         val source = Uri.fromFile(repoRoot().resolve("test-fixtures/seoul-bohol-sample.json"))
@@ -554,8 +505,10 @@ class MainActivityTest {
             activity.getString(R.string.preparing_trips),
             activity.findViewById<TextView>(R.id.loadingStageText).text.toString(),
         )
-        waitUntil { activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE }
-        assertEquals(true, activity.findViewById<View>(R.id.playButton).isEnabled)
+        waitUntil {
+            activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE &&
+                activity.findViewById<View>(R.id.playButton).isEnabled
+        }
 
         safeSharingSwitch.isChecked = false
         assertEquals(View.GONE, activity.findViewById<View>(R.id.privateAreaControls).visibility)
@@ -1012,6 +965,8 @@ class MainActivityTest {
     @Test
     fun rawOnlyTimelineRequiresWarningBeforeUsingEstimatedRoute() {
         acceptPrivacyDisclosure()
+        val privateArea = PrivacyArea("home", "Home", 37.5050, 127.0050, 5.0)
+        PrivacyAreaStore(context).save(listOf(privateArea))
         val source = File.createTempFile("raw-only-timeline", ".json", context.cacheDir)
         source.writeText(
             """
@@ -1042,6 +997,13 @@ class MainActivityTest {
             assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.rawSignalsDescription).visibility)
             assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.rawAccuracyLayout).visibility)
             assertTrue(activity.findViewById<TextView>(R.id.periodSummaryText).text.contains("2"))
+
+            activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(
+                R.id.safeSharingSwitch,
+            ).isChecked = true
+            waitUntil { activity.findViewById<View>(R.id.loadingGroup).visibility == View.GONE }
+            val protected = activity.findViewById<TimelineView>(R.id.timelineView).journey!!.points
+            assertTrue(protected.all { it.latitude == privateArea.latitude && it.longitude == privateArea.longitude })
         } finally {
             source.delete()
         }
@@ -1162,12 +1124,6 @@ class MainActivityTest {
         }
         return current
     }
-
-    private fun privacyCity(id: String, label: String) = PublicPlace(
-        id = id,
-        label = label,
-        point = GeoPoint(Instant.EPOCH, 0.0, 0.0),
-    )
 
     private fun launchActivity(intent: Intent? = null): MainActivity {
         controller = if (intent == null) {

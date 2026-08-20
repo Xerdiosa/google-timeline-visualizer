@@ -84,7 +84,7 @@ restore it directly.
 2. Choose a month range or use **Exact dates** for a trip lasting only a few days.
    The latest full year is selected by default, and ranges may cross year boundaries.
    For public sharing, turn on **Safe sharing mode**, choose **Private areas**, and
-   select cities to protect before previewing or creating.
+   draw circles around locations to protect before previewing or creating.
 3. Confirm the name and title template, then choose a preset or a custom journey
    duration from 10 through 300 seconds. The template is saved for next time and
    supports `{year}` and `{name}`. Durations over 60 seconds show a rendering-time
@@ -144,15 +144,18 @@ only isolated, implausible out-and-back coordinates, reports the number ignored,
 and keeps the original JSON file unchanged. Set the filter to Off to use every
 location from the selected file.
 
-Safe sharing mode uses a city blacklist so most of a trip keeps its original route
-geometry. After a Timeline is loaded, **Private areas** lists cities found in that
-file, while search covers the complete offline city index. **Privacy radius** offers
-10, 25, 50, or 100 km from each selected city center.
-Points inside that radius are replaced with the public city center; points outside
-selected areas remain unchanged. Segments identified as
-`FLYING` by the Timeline export are also left unchanged. Selections are stored
-locally and the original Timeline JSON is not changed. Unselected places remain
-precise, so preview the complete route before sharing it publicly.
+Safe sharing mode lets each user draw named privacy circles directly on the route,
+with an independent radius from 0.5 to 50 km. Points inside a circle are moved to
+its selected center without removing their timestamps. When sparse data crosses a
+circle without a recorded point inside it, a center point is inserted to preserve
+route continuity. The selected center remains visible, so place it on a location
+that is safe to show rather than on an exact home or workplace address.
+
+Points outside selected areas remain unchanged. Segments identified as `FLYING` by
+the Timeline export are also left unchanged. Circle names, centers, and radii are
+stored only in app-private preferences and excluded from Android backup and device
+transfer. The original Timeline JSON is not changed. Preview the complete route
+before sharing it publicly.
 
 The app supports English, Korean, Japanese, Simplified Chinese, Traditional Chinese,
 Spanish, French, German, and Brazilian Portuguese. Choose any supported language in
@@ -214,9 +217,5 @@ python -m pytest
 Basemap attribution is displayed in every preview and exported video:
 © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) and
 © [CARTO](https://carto.com/attributions).
-
-The offline city-center index is generated from
-[GeoNames cities15000](https://download.geonames.org/export/dump/) under
-[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 Licensed under the [MIT License](LICENSE).
