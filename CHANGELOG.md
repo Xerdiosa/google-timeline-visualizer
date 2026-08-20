@@ -1,5 +1,72 @@
 # Changelog
 
+## 2.2.5
+
+- Add Automatic, Kilometers, and Miles distance-unit choices.
+- Resolve Automatic from the device region and show the resolved unit directly in Settings.
+- Apply the selected unit consistently to selected-period summaries, previews, and exported videos.
+- Restore Automatic together with the other video defaults.
+- Preserve kilometers internally for route processing and convert only user-facing distances.
+- Translate the new distance-unit setting in all nine supported app languages.
+- Set Android version code 24 and version name 2.2.5.
+
+## 2.2.4
+
+- Keep video-generation progress visible above bottom navigation while scrolling or switching app tabs.
+- Show the current generation phase, percentage, estimated remaining time when available, and Cancel in one persistent tray.
+- Change the tray to Watch and Share when a video is ready, or Retry when generation fails.
+- Keep the preview playback scrubber separate from generation progress.
+- Announce major generation phase and result changes without announcing every percentage update.
+- Preserve the existing export service, background notifications, saved export recovery, and cancellation behavior.
+- Translate the new Retry action in all nine supported app languages.
+- Set Android version code 23 and version name 2.2.4.
+
+## 2.2.3
+
+- Recognize raw location records that may accompany or replace processed Timeline visits and trips.
+- Warn before using a raw-only export and offer to open Google Maps so the user can restore or confirm Timeline before exporting again.
+- Keep raw location processing optional when processed visits and trips are available.
+- Reduce raw-data noise with a configurable accuracy limit, stationary uncertainty collapse, and short impossible-jump rejection without averaging coordinates.
+- Mark raw-data distance as an estimate and report excluded raw points.
+- Add the fallback, controls, and warning to Android and the web app.
+- Translate the Android experience in all nine supported app languages.
+- Credit `@PeaShooterR` for the raw location import mode contributed in PR #84.
+- Set Android version code 22 and version name 2.2.3.
+
+## 2.2.2
+
+- Follow the Android system setting with matching light and dark app interfaces.
+- Keep Road map tiles and exported video appearance unchanged in both system themes.
+- Extend the bottom-navigation surface behind the gesture indicator or navigation-button area.
+- Preserve complete bottom-navigation icons and labels without applying the system inset twice.
+- Set Android version code 21 and version name 2.2.2.
+
+## 2.2.1
+
+- Prevent repeated or backtracking routes when independent semantic and path histories cover the same time.
+- Treat activity and visit segments as authoritative while retaining standalone path points outside their coverage.
+- Preserve path detail stored inside the same semantic segment and keep path-only exports unchanged.
+- Apply matching reconciliation behavior to Android, the web app, and the Python renderer.
+- Keep processing local without changing the source Timeline file.
+- Set Android version code 20 and version name 2.2.1.
+
+## 2.2.0
+
+- Add fixed portrait 1080×1920 and landscape 1920×1080 video formats.
+- Keep the existing square 480p, 720p, and 1080p formats and the square 480p default unchanged.
+- Match the preview and generated journey overview to the selected output aspect ratio.
+- Keep titles, dates, attribution, markers, and the ending overview proportionate in every format.
+- Check H.264 encoder size, frame-rate, bitrate, alignment, and color-layout support before preparing map tiles.
+- Disable unsupported output with a localized message instead of silently substituting another format.
+- Preserve existing saved settings and pending exports without a storage migration.
+- Retain the original route-stroke appearance for square videos.
+- Keep every Settings dropdown choice available after selection and navigation.
+- Add an in-app language selector for System default and all nine supported languages.
+- Show the installed version name and version code in Settings.
+- Replace deprecated Gson leniency handling and document the required legacy H.264 color layouts without changing import or export behavior.
+- Credit Rafiqi Rachmat (`@akunlainfiqi`) for the format-preset design and implementation contributed in PR #57.
+- Set Android version code 19 and version name 2.2.0.
+
 ## 2.1.3
 
 - Fix invalid translated preview date patterns that terminated the first frame in German, Spanish, French, and Portuguese.

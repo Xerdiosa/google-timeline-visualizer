@@ -25,7 +25,7 @@
     <string name="import_failed_detail">Diese Datei konnte nicht gelesen werden. Wählen Sie einen unterstützten Timeline JSON-Export aus.</string>
     <string name="timeline_error_malformed">Diese Datei enthält kein gültiges oder vollständiges JSON.</string>
     <string name="timeline_error_legacy">Dies ist ein älteres Google Takeout-Format. Exportieren Sie die Timeline-Daten stattdessen vom Telefon.</string>
-    <string name="timeline_error_raw_only">Dieser Export enthält Rohsignale, aber keine rekonstruierten Timeline-Reisen.</string>
+    <string name="timeline_error_raw_only">Diese Datei enthält keine verwendbaren Besuche, Wege oder rohen Standortdaten.</string>
     <string name="timeline_error_no_locations">Dieser Timeline-Export enthält keine Standortdaten. Timeline war möglicherweise nicht aktiviert, sodass Google keine Daten exportieren konnte.</string>
     <string name="remembered_timeline_unavailable">Der bisher verwendete Timeline ist nicht mehr verfügbar.</string>
     <string name="choose_timeline_again">Wählen Sie erneut die Datei Timeline.json.</string>
@@ -56,6 +56,7 @@
     <string name="cancel_video_creation">Videoerstellung abbrechen</string>
     <string name="video_creation_cancelled">Videoerstellung abgebrochen</string>
     <string name="cancel">Stornieren</string>
+    <string name="retry">Erneut versuchen</string>
     <string name="not_now">Nicht jetzt</string>
     <string name="background_video_title">Erstellen Sie im Hintergrund weiter</string>
     <string name="background_video_message">Erlauben Sie Benachrichtigungen, um den Videofortschritt nach dem Verlassen der App zu sehen und eine Benachrichtigung zu erhalten, wenn Ihr Video fertig ist. Die Videoerstellung wird auch dann fortgesetzt, wenn Benachrichtigungen nicht zulässig sind.</string>
@@ -65,7 +66,6 @@
     <string name="video_creation_notification_channel">Videoerstellung</string>
     <string name="video_creation_notification_channel_description">Fortschritts- und Abschlusswarnungen für timeline-Videos</string>
     <string name="no_video_player">Für die Wiedergabe dieses Videos ist keine App verfügbar</string>
-    <string name="journey_summary">%1$s Punkte · %2$s km · %3$s</string>
     <string name="period_same_year">%1$s–%2$s %3$d</string>
     <string name="period_cross_year">%1$s %2$d–%3$s %4$d</string>
     <string name="preparing_map_progress">Karte vorbereiten · %1$d/%2$d</string>
@@ -125,7 +125,6 @@
     <string name="project_on_github">Projekt auf GitHub</string>
     <string name="update_page_unavailable">Die Update-Seite konnte nicht geöffnet werden</string>
     <string name="web_page_unavailable">Die Webseite konnte nicht geöffnet werden</string>
-    <string name="distance_unit">km</string>
     <string name="map_attribution">© OpenStreetMap © CARTO</string>
     <string name="timeline_video">Timeline-Video</string>
     <string name="default_video_filename">Timeline Video.mp4</string>
@@ -162,7 +161,7 @@
     <string name="no_videos">Von Ihnen erstellte oder hinzugefügte Videos werden hier angezeigt.</string>
     <string name="show_all_videos">Alle anzeigen (%1$d)</string>
     <string name="show_fewer_videos">Weniger anzeigen</string>
-    <string name="selected_period_summary">%1$s Punkte · über %2$s km · %3$s</string>
+    <string name="selected_period_summary">%1$s Punkte · über %2$s %3$s · %4$s</string>
     <string name="selected_period_empty">Keine Standortpunkte in diesem Zeitraum</string>
     <string name="selected_period_one_point">1 Standortpunkt · Wählen Sie einen größeren Zeitraum</string>
     <string name="selected_period_no_movement">%1$s Punkte · keine Bewegung erkannt</string>
@@ -171,7 +170,7 @@
     <string name="save_as_failed">Eine Kopie des Videos konnte nicht gespeichert werden</string>
     <string name="video_copy_saved">Videokopie gespeichert</string>
     <string name="advanced_settings">Erweiterte Einstellungen</string>
-    <string name="advanced_settings_summary">Wählen Sie Kamerabewegung, Langstrecken-Timing und Exportqualität.</string>
+    <string name="advanced_settings_summary">Wählen Sie Kamerabewegung, Langstrecken-Timing und Exportformat.</string>
     <string name="camera_movement">Kamerabewegung</string>
     <string name="camera_fixed">Fest</string>
     <string name="camera_steady">Stetig</string>
@@ -198,13 +197,26 @@
     <string name="compression_gentle">Sanft · 0,92</string>
     <string name="compression_balanced">Ausgewogen · 0,85</string>
     <string name="compression_strong">Stark · 0,75</string>
-    <string name="video_quality">Videoqualität</string>
-    <string name="quality_standard">Standard · 480p</string>
-    <string name="quality_high">Hoch · 720p</string>
-    <string name="quality_ultra">Ultra · 1080p</string>
+    <string name="video_format">Videoformat</string>
+    <string name="format_square_480">Quadratisch · 480p</string>
+    <string name="format_square_720">Quadratisch · 720p</string>
+    <string name="format_square_1080">Quadratisch · 1080p</string>
+    <string name="format_portrait_1080">Hochformat · 1080×1920</string>
+    <string name="format_landscape_1080">Querformat · 1920×1080</string>
+    <string name="format_not_supported">Dieses Gerät kann keine %1$d×%2$d-Videos erstellen. Wählen Sie ein anderes Format.</string>
     <string name="restore_advanced_defaults">Standardeinstellungen wiederherstellen</string>
     <string name="advanced_defaults_restored">Erweiterte Einstellungen wiederhergestellt</string>
     <string name="use_exact_dates">Wählen Sie genaue Daten</string>
+    <string name="use_raw_location_data">Unverarbeitete Standortdaten verwenden</string>
+    <string name="raw_location_description">Verwendet aktuelle unverarbeitete Standortschätzungen. Rauschen wird reduziert, Route und Entfernung können aber ungenau bleiben.</string>
+    <string name="raw_accuracy_limit">Genauigkeitsgrenze (Meter)</string>
+    <string name="raw_accuracy_helper">Ungenauere Standorte werden ausgeschlossen. Leer lassen, um alle verwendbaren Standorte einzubeziehen.</string>
+    <string name="raw_accuracy_invalid">Null oder eine positive Zahl eingeben oder das Feld leer lassen.</string>
+    <string name="raw_location_summary">%1$s Standorte · geschätzt %2$s %3$s · %4$s ausgeschlossen</string>
+    <string name="raw_only_title">Nur unverarbeitete Standortdaten gefunden</string>
+    <string name="raw_only_message">Diese Datei enthält unverarbeitete Standortdaten, aber keine verarbeiteten Besuche oder Wege. Du kannst fortfahren, aber die Route kann ungenau oder unvollständig sein und die Entfernung ist nur eine Schätzung.\n\nÖffne für bessere Ergebnisse Google Maps, prüfe deine Zeitachse oder stelle sie wieder her und vergewissere dich, dass Besuche und Wege angezeigt werden. Exportiere die Zeitachse danach erneut und lade die neue Datei in dieser App.</string>
+    <string name="open_google_maps">Google Maps öffnen</string>
+    <string name="continue_with_raw_data">Mit Rohdaten fortfahren</string>
     <string name="choose_exact_dates">Wählen Sie ein Start- und Enddatum</string>
     <string name="exact_date_range">%1$s – %2$s</string>
     <string name="delete_all_videos">Alle Videos löschen</string>
@@ -217,6 +229,11 @@
     <string name="settings_summary">Legen Sie die Standardeinstellungen für Vorschauen und neue Videos fest.</string>
     <string name="video_defaults">Videostandards</string>
     <string name="video_defaults_summary">Änderungen gelten für die Vorschau und das nächste von Ihnen erstellte Video.</string>
+    <string name="distance_unit_setting">Entfernungseinheit</string>
+    <string name="distance_unit_automatic">Automatisch</string>
+    <string name="distance_unit_kilometers">Kilometer</string>
+    <string name="distance_unit_miles">Meilen</string>
+    <string name="distance_unit_automatic_resolved">%1$s · %2$s</string>
     <string name="timeline_processing">Timeline-Verarbeitung</string>
     <string name="location_filter">GPS-Ausreißerfilter</string>
     <string name="location_filter_summary">Die vorsichtige Filterung ignoriert nur kurze, unmögliche Hin- und Rückwege. Ihre Timeline-Datei wird nicht verändert.</string>
@@ -228,6 +245,10 @@
         <item quantity="other">%1$d verdächtige Standorte ignoriert</item>
     </plurals>
     <string name="about_and_privacy">Über und Datenschutz</string>
+    <string name="language">Sprache</string>
+    <string name="language_summary">Wählen Sie die Sprache für Timeline Visualizer. Der Systemstandard folgt der Geräte- oder Android-App-Sprache.</string>
+    <string name="language_system_default">Systemstandard</string>
+    <string name="app_version">Version %1$s (%2$d)</string>
     <string name="video_playback_failed">Dieses Video konnte in Timeline Visualizer nicht abgespielt werden.</string>
     <string name="open_in_another_app">In einer anderen App öffnen</string>
 </resources>

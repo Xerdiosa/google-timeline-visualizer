@@ -2,9 +2,12 @@ package dev.mahlernim.timelinevisualizer
 
 import android.animation.ValueAnimator
 import android.Manifest
+import android.app.LocaleManager
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
+import android.content.res.Resources
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -21,6 +24,7 @@ import android.widget.SeekBar
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.graphics.Insets
@@ -28,6 +32,7 @@ import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.isVisible
 import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.Lifecycle
@@ -47,6 +52,9 @@ import dev.mahlernim.timelinevisualizer.data.LocationFilterMode
 import dev.mahlernim.timelinevisualizer.data.LocationOutlierFilter
 import dev.mahlernim.timelinevisualizer.data.PublicPlace
 import dev.mahlernim.timelinevisualizer.data.PublicPlaceIndex
+import dev.mahlernim.timelinevisualizer.data.RawSignalPoint
+import dev.mahlernim.timelinevisualizer.data.RawSignalProcessingResult
+import dev.mahlernim.timelinevisualizer.data.RawSignalProcessor
 import dev.mahlernim.timelinevisualizer.data.TimelineAnonymizer
 import dev.mahlernim.timelinevisualizer.data.TimelineParseException
 import dev.mahlernim.timelinevisualizer.data.TimelineParseReason
@@ -67,6 +75,10 @@ import dev.mahlernim.timelinevisualizer.export.VideoExportRequestStore
 import dev.mahlernim.timelinevisualizer.export.VideoExportService
 import dev.mahlernim.timelinevisualizer.export.VideoExportSnapshot
 import dev.mahlernim.timelinevisualizer.export.VideoExportStatus
+import dev.mahlernim.timelinevisualizer.export.EncoderSupport
+import dev.mahlernim.timelinevisualizer.export.VideoEncoderSupport
+import dev.mahlernim.timelinevisualizer.export.describe
+import dev.mahlernim.timelinevisualizer.model.GeoPoint
 import dev.mahlernim.timelinevisualizer.model.Journey
 import dev.mahlernim.timelinevisualizer.model.Timeline
 import dev.mahlernim.timelinevisualizer.model.TimelinePeriod
@@ -75,11 +87,16 @@ import dev.mahlernim.timelinevisualizer.model.VideoDuration
 import dev.mahlernim.timelinevisualizer.render.TimelineAnimation
 import dev.mahlernim.timelinevisualizer.render.RenderText
 import dev.mahlernim.timelinevisualizer.render.CameraSettings
+import dev.mahlernim.timelinevisualizer.render.DistanceUnit
+import dev.mahlernim.timelinevisualizer.render.DistanceUnitPreference
 import dev.mahlernim.timelinevisualizer.render.CameraMovement
 import dev.mahlernim.timelinevisualizer.render.LongTripCompression
 import dev.mahlernim.timelinevisualizer.render.VideoQuality
 import dev.mahlernim.timelinevisualizer.ui.CameraSettingsPreferences
+import dev.mahlernim.timelinevisualizer.ui.DistanceUnitPreferences
+import dev.mahlernim.timelinevisualizer.ui.AppLanguage
 import dev.mahlernim.timelinevisualizer.ui.LocationFilterPreferences
+import dev.mahlernim.timelinevisualizer.ui.SelectionArrayAdapter
 import dev.mahlernim.timelinevisualizer.videos.GeneratedMediaRepository
 import dev.mahlernim.timelinevisualizer.videos.VideoMedia
 import dev.mahlernim.timelinevisualizer.videos.VideoRecord
@@ -97,6 +114,7 @@ import java.util.Locale
 import java.time.YearMonth
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -111,7 +129,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var playerScreen: ScreenPlayerBinding
     private var timeline: Timeline? = null
     private var renderTimeline: Timeline? = null
+    private var rawSignalPoints: List<RawSignalPoint> = emptyList()
+    private var rawSignalProcessing: RawSignalProcessingResult? = null
+    private var renderRawSignalsTimeline: Timeline? = null
+    private var rawSignalsEnabled = false
+    private var rawOnlyImport = false
     private var journey: Journey? = null
+    private var selectedIgnoredCount = 0
     private var animation: ValueAnimator? = null
     private var pendingExport: VideoExportRequest? = null
     private var lastVideoUri: Uri? = null
@@ -136,11 +160,15 @@ class MainActivity : AppCompatActivity() {
     private val generatedMedia by lazy { GeneratedMediaRepository(applicationContext) }
     private val timelineSourceStore by lazy { TimelineSourceStore(applicationContext) }
     private val cameraSettingsPreferences by lazy { CameraSettingsPreferences(applicationContext) }
+    private val distanceUnitPreferences by lazy { DistanceUnitPreferences(applicationContext) }
     private val locationFilterPreferences by lazy { LocationFilterPreferences(applicationContext) }
     private val cityIndex by lazy {
         assets.open("city_centers.csv").use { PublicPlaceIndex.read(it) }
     }
+    private val videoEncoderProfiles by lazy { VideoEncoderSupport.deviceProfiles() }
     private var cameraSettings = CameraSettings.DEFAULT
+    private var distanceUnitPreference = DistanceUnitPreference.AUTOMATIC
+    private var videoFormatSupported = true
     private var locationFilterMode = LocationFilterMode.CONSERVATIVE
     private var safeSharingMode = false
     private val privateCityIds = mutableSetOf<String>()
@@ -154,6 +182,7 @@ class MainActivity : AppCompatActivity() {
     private var rememberedTimelineLoaded = false
     private var interruptedTimelineRecovered = false
     private var lastRenderedExportStatus = VideoExportStatus.IDLE
+    private var lastAnnouncedExportPhase: ExportPhase? = null
     private var videoPlayer: ExoPlayer? = null
     private var playerUri: Uri? = null
     private var playerPositionMs = 0L
@@ -204,6 +233,12 @@ class MainActivity : AppCompatActivity() {
         editor = ScreenNewVideoBinding.bind(findViewById(R.id.newVideoScreen))
         settingsScreen = ScreenSettingsBinding.bind(findViewById(R.id.settingsScreen))
         playerScreen = ScreenPlayerBinding.bind(findViewById(R.id.playerScreen))
+        val lightSystemBars = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK !=
+            Configuration.UI_MODE_NIGHT_YES
+        WindowInsetsControllerCompat(window, binding.root).apply {
+            isAppearanceLightStatusBars = lightSystemBars
+            isAppearanceLightNavigationBars = lightSystemBars
+        }
         timelineSourceStore.recoverInterruptedImport()?.let { uri ->
             releaseUriAccess(uri)
             interruptedTimelineRecovered = true
@@ -211,7 +246,13 @@ class MainActivity : AppCompatActivity() {
         }
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { view, insets ->
             val bars: Insets = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(0, bars.top, 0, bars.bottom)
+            view.setPadding(0, bars.top, 0, 0)
+            binding.bottomNavigation.setPadding(
+                binding.bottomNavigation.paddingLeft,
+                binding.bottomNavigation.paddingTop,
+                binding.bottomNavigation.paddingRight,
+                bars.bottom,
+            )
             WindowInsetsCompat.CONSUMED
         }
 
@@ -225,7 +266,10 @@ class MainActivity : AppCompatActivity() {
             }
             true
         }
-        home.homeCancelExportButton.setOnClickListener { VideoExportService.cancel(applicationContext) }
+        binding.exportTrayCancelButton.setOnClickListener { VideoExportService.cancel(applicationContext) }
+        binding.exportTrayRetryButton.setOnClickListener { retryVideoExport() }
+        binding.exportTrayWatchButton.setOnClickListener { lastVideoUri?.let(::watchVideo) }
+        binding.exportTrayShareButton.setOnClickListener { lastVideoUri?.let(::shareVideo) }
         editor.doneButton.setOnClickListener {
             VideoExportCoordinator.clear(applicationContext)
             editor.videoReadyGroup.visibility = View.GONE
@@ -243,7 +287,6 @@ class MainActivity : AppCompatActivity() {
         editor.restoreTimelineHelpLink.setOnClickListener { openRestoreGuide() }
         editor.playButton.setOnClickListener { togglePreview() }
         editor.exportButton.setOnClickListener { chooseExportDestination() }
-        editor.cancelExportButton.setOnClickListener { VideoExportService.cancel(applicationContext) }
         editor.shareButton.setOnClickListener { lastVideoUri?.let(::shareVideo) }
         editor.saveOverviewButton.setOnClickListener { lastVideoUri?.let(::chooseOverviewDestination) }
         editor.shareOverviewButton.setOnClickListener { lastVideoUri?.let(::shareOverviewImage) }
@@ -258,6 +301,7 @@ class MainActivity : AppCompatActivity() {
         settingsScreen.privacyPolicyButton.setOnClickListener { openPrivacyPolicy() }
         settingsScreen.githubProjectButton.setOnClickListener { openWebPage(PROJECT_URL, R.string.web_page_unavailable) }
         settingsScreen.checkUpdatesButton.setOnClickListener { openUpdates() }
+        settingsScreen.versionText.text = installedVersionLabel()
         playerScreen.playerBackButton.setOnClickListener { showVideos() }
         playerScreen.playerShareButton.setOnClickListener { playerUri?.let(::shareVideo) }
         playerScreen.playerMoreButton.setOnClickListener {
@@ -293,8 +337,9 @@ class MainActivity : AppCompatActivity() {
         val durations = VideoDuration.presets.map {
             resources.getQuantityString(R.plurals.duration_seconds, it, it)
         } + getString(R.string.custom_duration)
-        editor.durationDropdown.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, durations))
+        editor.durationDropdown.setAdapter(SelectionArrayAdapter(this, durations))
         applyDuration(VideoDuration.DEFAULT_SECONDS)
+        configureDistanceUnitSelection()
         editor.timelineView.renderText = currentRenderText()
         editor.durationDropdown.setOnItemClickListener { _, _, position, _ ->
             if (position == VideoDuration.presets.size) {
@@ -306,6 +351,7 @@ class MainActivity : AppCompatActivity() {
         makeDropdownOpenReliably(editor.durationDropdown)
         configureAdvancedSettings()
         configureLocationFiltering()
+        configureLanguageSelection()
         configureCameraPreparation()
         configureMonthDropdowns()
         configureExactDates()
@@ -445,6 +491,14 @@ class MainActivity : AppCompatActivity() {
         if (currentScreen == Screen.PLAYER) initializeVideoPlayer()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::settingsScreen.isInitialized) updateLanguageSelectionLabel()
+        if (::settingsScreen.isInitialized && distanceUnitPreference == DistanceUnitPreference.AUTOMATIC) {
+            applyDistanceUnitPreference(distanceUnitPreference, save = false)
+        }
+    }
+
     override fun onStop() {
         releaseVideoPlayer()
         super.onStop()
@@ -503,7 +557,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateResolvedTitle() {
-        val period = currentPeriod() ?: return
+        val period = if (rawSignalsEnabled) rawSignalsPeriod() else currentPeriod()
+        if (period == null) return
         editor.timelineView.videoTitle = resolvedTitle(period)
     }
 
@@ -531,10 +586,15 @@ class MainActivity : AppCompatActivity() {
         importJob = lifecycleScope.launch {
             try {
                 editor.loadingStageText.setText(R.string.reading_timeline)
-                val loaded = withContext(Dispatchers.IO) {
-                    contentResolver.openInputStream(uri)?.use(TimelineParser()::parse)
+                val parsed = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)?.use(TimelineParser()::parseWithRawSignals)
                         ?: throw java.io.FileNotFoundException()
                 }
+                if (parsed.timeline == null) {
+                    showRawOnlyImportChoice(uri, parsed.rawSignals, remembered)
+                    return@launch
+                }
+                val loaded = parsed.timeline
                 editor.loadingStageText.setText(R.string.preparing_trips)
                 val prepared = withContext(Dispatchers.Default) {
                     prepareTimeline(
@@ -549,6 +609,10 @@ class MainActivity : AppCompatActivity() {
                 availablePrivacyCities = prepared.availablePrivacyCities
                 updatePrivateAreasSummary()
                 editor.privateAreasButton.isEnabled = true
+                rawSignalPoints = parsed.rawSignals
+                rawOnlyImport = false
+                editor.rawAccuracyInput.setText(RawSignalProcessor.DEFAULT_MAXIMUM_ACCURACY_METERS.toInt().toString())
+                rebuildRawSignalsTimeline()
                 pendingImportCompletionUri = uri
                 configureYears(loaded, prepared.initialJourney, prepared.ignoredCount)
                 editor.editorGroup.visibility = View.VISIBLE
@@ -564,6 +628,7 @@ class MainActivity : AppCompatActivity() {
                 renderTimeline = null
                 availablePrivacyCities = emptyList()
                 editor.privateAreasButton.isEnabled = false
+                clearRawSignalState()
                 if (remembered) {
                     timelineSourceStore.clear()
                     releaseUriAccess(uri)
@@ -581,6 +646,7 @@ class MainActivity : AppCompatActivity() {
                 renderTimeline = null
                 availablePrivacyCities = emptyList()
                 editor.privateAreasButton.isEnabled = false
+                clearRawSignalState()
                 if (remembered) {
                     timelineSourceStore.clear()
                     releaseUriAccess(uri)
@@ -595,6 +661,111 @@ class MainActivity : AppCompatActivity() {
                 importJob = null
             }
         }
+    }
+
+    private fun showRawOnlyImportChoice(uri: Uri, points: List<RawSignalPoint>, remembered: Boolean) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.raw_only_title)
+            .setMessage(R.string.raw_only_message)
+            .setPositiveButton(R.string.open_google_maps) { _, _ ->
+                cancelPendingImport(uri)
+                openGoogleMaps()
+            }
+            .setNegativeButton(R.string.continue_with_raw_data) { _, _ ->
+                continueRawOnlyImport(uri, points, remembered)
+            }
+            .setOnCancelListener { cancelPendingImport(uri) }
+            .show()
+    }
+
+    private fun continueRawOnlyImport(uri: Uri, points: List<RawSignalPoint>, remembered: Boolean) {
+        if (importJob?.isActive == true) return
+        setTimelineLoading(true, R.string.preparing_trips)
+        val useSafeSharing = safeSharingMode
+        val selectedPrivateCityIds = privateCityIds.toSet()
+        val selectedPrivateAreaRadiusKm = privateAreaRadiusKm.toDouble()
+        importJob = lifecycleScope.launch {
+            try {
+                rawSignalPoints = points
+                rawOnlyImport = true
+                rawSignalsEnabled = true
+                editor.rawAccuracyInput.setText(RawSignalProcessor.DEFAULT_MAXIMUM_ACCURACY_METERS.toInt().toString())
+                val prepared = withContext(Dispatchers.Default) {
+                    prepareRawSignals(
+                        points,
+                        useSafeSharing,
+                        selectedPrivateCityIds,
+                        selectedPrivateAreaRadiusKm,
+                    )
+                }
+                val result = prepared.processing
+                rawSignalProcessing = result
+                val loaded = result.points.takeIf(List<dev.mahlernim.timelinevisualizer.model.GeoPoint>::isNotEmpty)
+                    ?.let(::Timeline)
+                    ?: throw TimelineParseException(
+                        TimelineParseReason.NO_USABLE_LOCATIONS,
+                        "No raw locations passed the default quality filter",
+                    )
+                val rendered = prepared.renderPoints.takeIf { it.isNotEmpty() }?.let(::Timeline)
+                    ?: throw TimelineParseException(
+                        TimelineParseReason.NO_USABLE_LOCATIONS,
+                        "No raw locations remained after privacy processing",
+                    )
+                timeline = loaded
+                renderTimeline = rendered
+                renderRawSignalsTimeline = rendered
+                availablePrivacyCities = prepared.availablePrivacyCities
+                updatePrivateAreasSummary()
+                editor.privateAreasButton.isEnabled = true
+                val period = rawSignalsPeriod() ?: TimelinePeriod.sameYear(loaded.years.first())
+                pendingImportCompletionUri = uri
+                configureYears(
+                    loaded,
+                    rendered.forRange(period),
+                    result.rejectedCount,
+                    startInRawMode = true,
+                )
+                editor.editorGroup.visibility = View.VISIBLE
+                updateCameraPreparationUi()
+                if (!remembered) rememberTimelineSource(uri)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                Log.e(TAG, "Raw Timeline import failed", error)
+                cancelPendingImport(uri)
+                editor.statusText.setText(R.string.timeline_error_no_locations)
+                Snackbar.make(binding.root, R.string.import_failed, Snackbar.LENGTH_LONG).show()
+            } finally {
+                setTimelineLoading(false)
+                importJob = null
+            }
+        }
+    }
+
+    private fun cancelPendingImport(uri: Uri) {
+        timelineSourceStore.completeImport(uri)
+        pendingImportCompletionUri = null
+        timeline = null
+        renderTimeline = null
+        clearRawSignalState()
+        availablePrivacyCities = emptyList()
+        editor.privateAreasButton.isEnabled = false
+        editor.statusText.setText(R.string.no_timeline)
+    }
+
+    private fun clearRawSignalState() {
+        rawSignalPoints = emptyList()
+        rawSignalProcessing = null
+        renderRawSignalsTimeline = null
+        rawSignalsEnabled = false
+        rawOnlyImport = false
+    }
+
+    private fun openGoogleMaps() {
+        val launch = packageManager.getLaunchIntentForPackage(GOOGLE_MAPS_PACKAGE)
+        val intent = launch ?: Intent(Intent.ACTION_VIEW, GOOGLE_TIMELINE_HELP_URL.toUri())
+        runCatching { startActivity(intent) }
+            .onFailure { startActivity(Intent(Intent.ACTION_VIEW, GOOGLE_TIMELINE_HELP_URL.toUri())) }
     }
 
     private fun timelineParseMessage(reason: TimelineParseReason): Int = when (reason) {
@@ -621,10 +792,12 @@ class MainActivity : AppCompatActivity() {
         editor.endMonthDropdown.isEnabled = editingEnabled
         editor.exactDateSwitch.isEnabled = editingEnabled
         editor.exactDateRangeButton.isEnabled = editingEnabled
+        editor.rawSignalsSwitch.isEnabled = editingEnabled
+        editor.rawAccuracyInput.isEnabled = editingEnabled
         val cameraReady = editor.timelineView.isCameraReady
         val canCreate = editingEnabled && cameraReady && renderTimeline != null && journey?.let(::canCreateVideo) == true
         editor.playButton.isEnabled = canCreate
-        editor.exportButton.isEnabled = canCreate
+        editor.exportButton.isEnabled = canCreate && videoFormatSupported
         editor.timelineSeek.isEnabled = editingEnabled && cameraReady
         settingsScreen.locationFilterDropdown.isEnabled = editingEnabled
     }
@@ -672,11 +845,16 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun configureYears(loaded: Timeline, initialJourney: Journey, ignoredCount: Int) {
+    private fun configureYears(
+        loaded: Timeline,
+        initialJourney: Journey,
+        ignoredCount: Int,
+        startInRawMode: Boolean = false,
+    ) {
         val years = loaded.years
         val labels = years.map { NumberFormat.getIntegerInstance().apply { isGroupingUsed = false }.format(it) }
-        editor.startYearDropdown.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, labels))
-        editor.endYearDropdown.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, labels))
+        editor.startYearDropdown.setAdapter(SelectionArrayAdapter(this, labels))
+        editor.endYearDropdown.setAdapter(SelectionArrayAdapter(this, labels))
         makeDropdownOpenReliably(editor.startYearDropdown)
         makeDropdownOpenReliably(editor.endYearDropdown)
         editor.startYearDropdown.setOnItemClickListener { _, _, position, _ ->
@@ -690,16 +868,27 @@ class MainActivity : AppCompatActivity() {
         selectedStartYear = years.first()
         selectedEndYear = years.first()
         exactDateRangeEnabled = false
+        rawSignalsEnabled = startInRawMode
+        rawOnlyImport = startInRawMode
         selectedStartDate = null
         selectedEndDate = null
         editor.exactDateSwitch.isChecked = false
+        editor.rawSignalsSwitch.isChecked = startInRawMode
+        editor.rawSignalsSwitch.visibility = if (rawSignalPoints.isNotEmpty() && !rawOnlyImport) View.VISIBLE else View.GONE
         updateExactDateControls()
+        updateRawSignalsControls()
         updateYearDropdowns()
-        updateResolvedTitle()
         applySelectedJourney(initialJourney, ignoredCount)
+        updateResolvedTitle()
     }
 
     private fun selectRange() {
+        if (rawSignalsEnabled) {
+            val period = rawSignalsPeriod() ?: return
+            val selected = renderRawSignalsTimeline?.forRange(period) ?: Journey.from(emptyList(), period)
+            applySelectedJourney(selected, rawSignalProcessing?.rejectedCount ?: 0)
+            return
+        }
         val period = currentPeriod() ?: return
         val selected = if (exactDateRangeEnabled) {
             val start = selectedStartDate ?: return
@@ -720,6 +909,7 @@ class MainActivity : AppCompatActivity() {
     private fun applySelectedJourney(selected: Journey, ignoredCount: Int) {
         animation?.cancel()
         journey = selected
+        selectedIgnoredCount = ignoredCount
         editor.timelineView.journey = selected
         editor.timelineSeek.progress = 0
         showProgress(0f)
@@ -730,8 +920,18 @@ class MainActivity : AppCompatActivity() {
 
     internal fun selectedPeriodSummary(selected: Journey, ignoredCount: Int = 0): String {
         val number = NumberFormat.getNumberInstance().apply { maximumFractionDigits = 0 }
+        val unit = resolvedDistanceUnit()
         if (selected.points.isEmpty()) return withOutlierSummary(getString(R.string.selected_period_empty), ignoredCount)
         if (selected.points.size == 1) return withOutlierSummary(getString(R.string.selected_period_one_point), ignoredCount)
+        if (rawSignalsEnabled) {
+            return getString(
+                R.string.raw_location_summary,
+                number.format(selected.points.size),
+                number.format(unit.fromKilometers(selected.totalDistanceKm)),
+                unit.symbol,
+                number.format(rawSignalProcessing?.rejectedCount ?: ignoredCount),
+            )
+        }
         if (selected.totalDistanceKm <= 0) {
             return withOutlierSummary(
                 getString(R.string.selected_period_no_movement, number.format(selected.points.size)),
@@ -771,7 +971,8 @@ class MainActivity : AppCompatActivity() {
             getString(
                 R.string.selected_period_summary,
                 number.format(selected.points.size),
-                number.format(selected.totalDistanceKm),
+                number.format(unit.fromKilometers(selected.totalDistanceKm)),
+                unit.symbol,
                 period,
             ),
             ignoredCount,
@@ -791,9 +992,8 @@ class MainActivity : AppCompatActivity() {
         selected.points.size >= 2 && selected.totalDistanceKm > 0
 
     private fun configureMonthDropdowns() {
-        val adapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, monthNames)
-        editor.startMonthDropdown.setAdapter(adapter)
-        editor.endMonthDropdown.setAdapter(adapter)
+        editor.startMonthDropdown.setAdapter(SelectionArrayAdapter(this, monthNames))
+        editor.endMonthDropdown.setAdapter(SelectionArrayAdapter(this, monthNames))
         editor.startMonthDropdown.setText(monthNames.first(), false)
         editor.endMonthDropdown.setText(monthNames.last(), false)
         makeDropdownOpenReliably(editor.startMonthDropdown)
@@ -819,7 +1019,95 @@ class MainActivity : AppCompatActivity() {
             selectRange()
         }
         editor.exactDateRangeButton.setOnClickListener { showExactDatePicker() }
+        editor.rawSignalsSwitch.setOnCheckedChangeListener { _, checked ->
+            rawSignalsEnabled = (checked || rawOnlyImport) && rawSignalPoints.isNotEmpty()
+            rebuildRawSignalsTimeline()
+            updateRawSignalsControls()
+            selectRange()
+            updateResolvedTitle()
+        }
+        editor.rawAccuracyInput.doAfterTextChanged {
+            if (rawSignalsEnabled) {
+                rebuildRawSignalsTimeline()
+                selectRange()
+            }
+        }
         updateExactDateControls()
+        updateRawSignalsControls()
+    }
+
+    private fun updateRawSignalsControls() {
+        editor.periodDateControlsGroup.visibility = if (rawSignalsEnabled) View.GONE else View.VISIBLE
+        editor.exactDateSwitch.visibility = if (rawSignalsEnabled) View.GONE else View.VISIBLE
+        editor.exactDateRangeButton.visibility = if (!rawSignalsEnabled && exactDateRangeEnabled) View.VISIBLE else View.GONE
+        editor.rawSignalsDescription.visibility = if (rawSignalsEnabled) View.VISIBLE else View.GONE
+        editor.rawAccuracyLayout.visibility = if (rawSignalsEnabled) View.VISIBLE else View.GONE
+    }
+
+    private fun rebuildRawSignalsTimeline(): RawSignalProcessingResult? {
+        val rawLimit = editor.rawAccuracyInput.text?.toString()?.trim().orEmpty()
+        val maximumAccuracy = if (rawLimit.isEmpty()) {
+            null
+        } else {
+            rawLimit.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
+        }
+        if (rawLimit.isNotEmpty() && maximumAccuracy == null) {
+            editor.rawAccuracyLayout.error = getString(R.string.raw_accuracy_invalid)
+            rawSignalProcessing = null
+            renderRawSignalsTimeline = null
+            return null
+        }
+        editor.rawAccuracyLayout.error = null
+        val result = RawSignalProcessor.process(rawSignalPoints, maximumAccuracy)
+        rawSignalProcessing = result
+        val renderPoints = anonymizePrivateAreas(result.points)
+        renderRawSignalsTimeline = renderPoints.takeIf { it.isNotEmpty() }?.let(::Timeline)
+        return result
+    }
+
+    private fun prepareRawSignals(
+        points: List<RawSignalPoint>,
+        useSafeSharing: Boolean,
+        selectedPrivateCityIds: Set<String>,
+        selectedPrivateAreaRadiusKm: Double,
+    ): PreparedRawSignals {
+        val processing = RawSignalProcessor.process(points)
+        val availablePrivacyCities = cityIndex.distinctNearest(
+            processing.points.asSequence(),
+            TimelineAnonymizer.MAX_PRIVATE_AREA_RADIUS_KM,
+        )
+        val renderPoints = if (useSafeSharing) {
+            TimelineAnonymizer.anonymize(
+                processing.points,
+                cityIndex,
+                selectedPrivateCityIds,
+                selectedPrivateAreaRadiusKm,
+            ).points
+        } else {
+            processing.points
+        }
+        return PreparedRawSignals(processing, renderPoints, availablePrivacyCities)
+    }
+
+    private fun anonymizePrivateAreas(points: List<GeoPoint>): List<GeoPoint> = if (safeSharingMode) {
+        TimelineAnonymizer.anonymize(
+            points,
+            cityIndex,
+            privateCityIds,
+            privateAreaRadiusKm.toDouble(),
+        ).points
+    } else {
+        points
+    }
+
+    private fun rawSignalsPeriod(): TimelinePeriod? {
+        val points = renderRawSignalsTimeline?.points ?: return null
+        if (points.isEmpty()) return null
+        val zone = ZoneId.systemDefault()
+        return TimelinePeriod(
+            YearMonth.from(points.first().instant.atZone(zone)),
+            YearMonth.from(points.last().instant.atZone(zone)),
+        )
     }
 
     private fun showExactDatePicker() {
@@ -975,9 +1263,11 @@ class MainActivity : AppCompatActivity() {
             R.string.compression_strong,
         ).map(::getString)
         val qualityLabels = listOf(
-            R.string.quality_standard,
-            R.string.quality_high,
-            R.string.quality_ultra,
+            R.string.format_square_480,
+            R.string.format_square_720,
+            R.string.format_square_1080,
+            R.string.format_portrait_1080,
+            R.string.format_landscape_1080,
         ).map(::getString)
 
         listOf(
@@ -985,7 +1275,7 @@ class MainActivity : AppCompatActivity() {
             settingsScreen.longTripDropdown to compressionLabels,
             settingsScreen.videoQualityDropdown to qualityLabels,
         ).forEach { (dropdown, labels) ->
-            dropdown.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, labels))
+            dropdown.setAdapter(SelectionArrayAdapter(this, labels))
             makeDropdownOpenReliably(dropdown)
         }
 
@@ -999,6 +1289,7 @@ class MainActivity : AppCompatActivity() {
             updateAdvancedSettings(cameraSettings.copy(videoQuality = VideoQuality.values()[position]))
         }
         settingsScreen.resetAdvancedSettingsButton.setOnClickListener {
+            applyDistanceUnitPreference(DistanceUnitPreference.AUTOMATIC)
             applyAdvancedSettings(cameraSettingsPreferences.reset())
             Snackbar.make(binding.root, R.string.advanced_defaults_restored, Snackbar.LENGTH_SHORT).show()
         }
@@ -1012,7 +1303,7 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.location_filter_off),
         )
         settingsScreen.locationFilterDropdown.setAdapter(
-            ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, labels),
+            SelectionArrayAdapter(this, labels),
         )
         makeDropdownOpenReliably(settingsScreen.locationFilterDropdown)
         settingsScreen.locationFilterDropdown.setOnItemClickListener { _, _, position, _ ->
@@ -1023,6 +1314,90 @@ class MainActivity : AppCompatActivity() {
         }
         locationFilterMode = locationFilterPreferences.load()
         updateLocationFilterLabel()
+    }
+
+    private fun configureDistanceUnitSelection() {
+        distanceUnitPreference = distanceUnitPreferences.load()
+        val dropdown = settingsScreen.distanceUnitDropdown
+        dropdown.setAdapter(SelectionArrayAdapter(this, distanceUnitLabels()))
+        makeDropdownOpenReliably(dropdown)
+        updateDistanceUnitLabel()
+        dropdown.setOnItemClickListener { _, _, position, _ ->
+            applyDistanceUnitPreference(DistanceUnitPreference.entries[position])
+        }
+    }
+
+    private fun applyDistanceUnitPreference(preference: DistanceUnitPreference, save: Boolean = true) {
+        distanceUnitPreference = preference
+        if (save) distanceUnitPreferences.save(preference)
+        updateDistanceUnitLabel()
+        editor.timelineView.renderText = currentRenderText()
+        journey?.let { editor.periodSummaryText.text = selectedPeriodSummary(it, selectedIgnoredCount) }
+        showProgress(editor.timelineSeek.progress / 1000f)
+    }
+
+    private fun updateDistanceUnitLabel() {
+        val dropdown = settingsScreen.distanceUnitDropdown
+        val labels = distanceUnitLabels()
+        dropdown.setAdapter(SelectionArrayAdapter(this, labels))
+        dropdown.setText(labels[distanceUnitPreference.ordinal], false)
+    }
+
+    private fun distanceUnitLabels(): List<String> {
+        val automatic = getString(
+            R.string.distance_unit_automatic_resolved,
+            getString(R.string.distance_unit_automatic),
+            distanceUnitName(DistanceUnit.automatic(systemLocale())),
+        )
+        return listOf(
+            automatic,
+            getString(R.string.distance_unit_kilometers),
+            getString(R.string.distance_unit_miles),
+        )
+    }
+
+    private fun distanceUnitName(unit: DistanceUnit): String = getString(
+        when (unit) {
+            DistanceUnit.KILOMETERS -> R.string.distance_unit_kilometers
+            DistanceUnit.MILES -> R.string.distance_unit_miles
+        },
+    )
+
+    private fun resolvedDistanceUnit(): DistanceUnit = distanceUnitPreference.resolve(systemLocale())
+
+    private fun systemLocale(): Locale =
+        Resources.getSystem().configuration.locales[0] ?: Locale.getDefault(Locale.Category.FORMAT)
+
+    private fun configureLanguageSelection() {
+        val labels = listOf(
+            getString(R.string.language_system_default),
+            getString(R.string.language_name_en),
+            getString(R.string.language_name_ko),
+            getString(R.string.language_name_ja),
+            getString(R.string.language_name_zh_cn),
+            getString(R.string.language_name_zh_tw),
+            getString(R.string.language_name_es),
+            getString(R.string.language_name_fr),
+            getString(R.string.language_name_de),
+            getString(R.string.language_name_pt_br),
+        )
+        val dropdown = settingsScreen.languageDropdown
+        dropdown.setAdapter(SelectionArrayAdapter(this, labels))
+        makeDropdownOpenReliably(dropdown)
+        updateLanguageSelectionLabel()
+        dropdown.post(::updateLanguageSelectionLabel)
+        dropdown.setOnItemClickListener { _, _, position, _ ->
+            val locales = AppLanguage.localesForSelection(position)
+            if (AppCompatDelegate.getApplicationLocales() != locales) {
+                AppCompatDelegate.setApplicationLocales(locales)
+            }
+        }
+    }
+
+    private fun updateLanguageSelectionLabel() {
+        val dropdown = settingsScreen.languageDropdown
+        val selected = AppLanguage.selectionIndex(currentApplicationLanguageTags())
+        dropdown.setText(dropdown.adapter.getItem(selected).toString(), false)
     }
 
     private fun configureCameraPreparation() {
@@ -1047,7 +1422,7 @@ class MainActivity : AppCompatActivity() {
         val editingEnabled = !exportingVideo && !editor.loadingGroup.isVisible
         val canCreate = editingEnabled && selected?.let(::canCreateVideo) == true && ready
         editor.playButton.isEnabled = canCreate
-        editor.exportButton.isEnabled = canCreate
+        editor.exportButton.isEnabled = canCreate && videoFormatSupported
         editor.timelineSeek.isEnabled = editingEnabled && ready
         if (selected != null && !ready && editingEnabled) {
             editor.statusText.setText(R.string.preparing_preview)
@@ -1082,7 +1457,8 @@ class MainActivity : AppCompatActivity() {
         val useSafeSharing = safeSharingMode
         val selectedPrivateCityIds = privateCityIds.toSet()
         val selectedPrivateAreaRadiusKm = privateAreaRadiusKm.toDouble()
-        val journeySelection = if (reselect) currentJourneySelection() else null
+        val reselectRawSignals = reselect && rawSignalsEnabled
+        val journeySelection = if (reselect && !rawSignalsEnabled) currentJourneySelection() else null
         val generation = ++timelineRebuildGeneration
         timelineRebuildJob?.cancel()
         animation?.cancel()
@@ -1103,7 +1479,10 @@ class MainActivity : AppCompatActivity() {
                 if (generation != timelineRebuildGeneration) return@launch
                 renderTimeline = rebuilt.timeline
                 rebuilt.availablePrivacyCities?.let { availablePrivacyCities = it }
-                rebuilt.selectedJourney?.let {
+                if (rawSignalPoints.isNotEmpty()) rebuildRawSignalsTimeline()
+                if (reselectRawSignals) {
+                    selectRange()
+                } else rebuilt.selectedJourney?.let {
                     applySelectedJourney(it.journey, it.ignoredCount)
                 }
             } catch (cancelled: CancellationException) {
@@ -1316,10 +1695,33 @@ class MainActivity : AppCompatActivity() {
             false,
         )
         settingsScreen.videoQualityDropdown.setText(
-            getString(listOf(R.string.quality_standard, R.string.quality_high, R.string.quality_ultra)[settings.videoQuality.ordinal]),
+            videoFormatLabel(settings.videoQuality),
             false,
         )
+        val warning = videoFormatWarning(settings.videoQuality)
+        videoFormatSupported = warning == null
+        settingsScreen.videoFormatWarningText.text = warning
+        settingsScreen.videoFormatWarningText.visibility = if (warning == null) View.GONE else View.VISIBLE
+        updateCameraPreparationUi()
         showProgress(editor.timelineSeek.progress / 1000f)
+    }
+
+    private fun videoFormatLabel(format: VideoQuality): String = getString(
+        when (format) {
+            VideoQuality.STANDARD -> R.string.format_square_480
+            VideoQuality.HIGH -> R.string.format_square_720
+            VideoQuality.ULTRA -> R.string.format_square_1080
+            VideoQuality.PORTRAIT -> R.string.format_portrait_1080
+            VideoQuality.LANDSCAPE -> R.string.format_landscape_1080
+        },
+    )
+
+    private fun videoFormatWarning(format: VideoQuality): String? {
+        if (videoEncoderProfiles.isEmpty()) return null
+        return when (val support = VideoEncoderSupport.select(format, videoEncoderProfiles)) {
+            is EncoderSupport.Supported -> null
+            is EncoderSupport.Unsupported -> support.reason.describe(this, format)
+        }
     }
 
     private fun applyDuration(seconds: Int) {
@@ -1439,7 +1841,6 @@ class MainActivity : AppCompatActivity() {
         )
         VideoExportCoordinator.publish(applicationContext, snapshot)
         runCatching { VideoExportService.start(applicationContext) }.onFailure {
-            VideoExportRequestStore(applicationContext).clear()
             generatedMedia.discard(uri)
             VideoExportCoordinator.publish(
                 applicationContext,
@@ -1462,11 +1863,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderVideoExport(snapshot: VideoExportSnapshot) {
-        home.homeExportGroup.visibility = if (snapshot.status == VideoExportStatus.RUNNING) View.VISIBLE else View.GONE
         when (snapshot.status) {
-            VideoExportStatus.IDLE -> setExporting(false)
+            VideoExportStatus.IDLE -> {
+                setExporting(false)
+                hideExportTray()
+            }
             VideoExportStatus.RUNNING -> {
                 setExporting(true)
+                showRunningExportTray()
                 snapshot.progress?.let { showExportProgress(it, snapshot.startedAtMillis) }
             }
             VideoExportStatus.COMPLETE -> {
@@ -1481,23 +1885,68 @@ class MainActivity : AppCompatActivity() {
                     editor.shareOverviewButton.isEnabled = hasOverview
                 }
                 editor.statusText.text = getString(R.string.video_saved)
+                showCompletedExportTray()
                 if (lastRenderedExportStatus != VideoExportStatus.COMPLETE) renderVideos()
             }
             VideoExportStatus.CANCELLED -> {
                 setExporting(false)
+                hideExportTray()
                 editor.statusText.text = getString(R.string.video_creation_cancelled)
             }
             VideoExportStatus.FAILED -> {
                 setExporting(false)
                 editor.statusText.setText(R.string.video_export_failed)
+                showFailedExportTray(snapshot.errorMessage)
             }
         }
         lastRenderedExportStatus = snapshot.status
     }
 
+    private fun showRunningExportTray() {
+        binding.exportStatusTray.visibility = View.VISIBLE
+        binding.exportTrayProgress.visibility = View.VISIBLE
+        binding.exportTrayCancelButton.visibility = View.VISIBLE
+        binding.exportTrayWatchButton.visibility = View.GONE
+        binding.exportTrayShareButton.visibility = View.GONE
+        binding.exportTrayRetryButton.visibility = View.GONE
+    }
+
+    private fun showCompletedExportTray() {
+        binding.exportStatusTray.visibility = View.VISIBLE
+        binding.exportTrayProgress.visibility = View.GONE
+        binding.exportTrayCancelButton.visibility = View.GONE
+        binding.exportTrayRetryButton.visibility = View.GONE
+        binding.exportTrayWatchButton.visibility = if (lastVideoUri != null) View.VISIBLE else View.GONE
+        binding.exportTrayShareButton.visibility = if (lastVideoUri != null) View.VISIBLE else View.GONE
+        binding.exportTrayStatusText.setText(R.string.video_ready)
+        if (lastRenderedExportStatus != VideoExportStatus.COMPLETE) {
+            announceExportStatus(getString(R.string.video_ready))
+        }
+        lastAnnouncedExportPhase = null
+    }
+
+    private fun showFailedExportTray(message: String?) {
+        binding.exportStatusTray.visibility = View.VISIBLE
+        binding.exportTrayProgress.visibility = View.GONE
+        binding.exportTrayCancelButton.visibility = View.GONE
+        binding.exportTrayWatchButton.visibility = View.GONE
+        binding.exportTrayShareButton.visibility = View.GONE
+        binding.exportTrayRetryButton.visibility = View.VISIBLE
+        binding.exportTrayRetryButton.isEnabled = true
+        binding.exportTrayStatusText.text = message ?: getString(R.string.video_export_failed)
+        if (lastRenderedExportStatus != VideoExportStatus.FAILED) {
+            announceExportStatus(binding.exportTrayStatusText.text)
+        }
+        lastAnnouncedExportPhase = null
+    }
+
+    private fun hideExportTray() {
+        binding.exportStatusTray.visibility = View.GONE
+        lastAnnouncedExportPhase = null
+    }
+
     private fun showExportProgress(progress: ExportProgress, startedAtMillis: Long) {
-        editor.exportProgress.progress = (progress.fraction * 1000).toInt()
-        home.homeExportProgress.progress = (progress.fraction * 1000).toInt()
+        binding.exportTrayProgress.progress = (progress.fraction * 1000).toInt()
         if (progress.phase == ExportPhase.COMPLETE) return
         val base = when (progress.phase) {
             ExportPhase.PREPARING_MAP -> getString(
@@ -1523,7 +1972,55 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.progress_with_eta, base, formatRemainingTime(remaining))
         } else base
         editor.statusText.text = status
-        home.homeExportStatusText.text = status
+        binding.exportTrayStatusText.text = status
+        if (lastAnnouncedExportPhase != progress.phase) {
+            announceExportStatus(base)
+            lastAnnouncedExportPhase = progress.phase
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun announceExportStatus(status: CharSequence) {
+        binding.exportTrayStatusText.announceForAccessibility(status)
+    }
+
+    private fun retryVideoExport() {
+        binding.exportTrayRetryButton.isEnabled = false
+        lifecycleScope.launch {
+            val request = withContext(Dispatchers.IO) {
+                VideoExportRequestStore(applicationContext).load()
+            }
+            retryVideoExport(request)
+        }
+    }
+
+    private fun retryVideoExport(request: VideoExportRequest?) {
+        if (request == null) {
+            VideoExportCoordinator.clear(applicationContext)
+            showNewVideo(loadRemembered = true)
+            Snackbar.make(binding.root, R.string.video_request_unavailable, Snackbar.LENGTH_LONG).show()
+            return
+        }
+        binding.exportTrayRetryButton.isEnabled = true
+        pendingExport = request.copy(outputUri = "")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val retryRequest = pendingExport ?: return
+            pendingExport = null
+            runCatching { generatedMedia.createVideoDestination(retryRequest.title, retryRequest.journey.period) }
+                .onSuccess { uri -> uri?.let { startVideoExport(it, retryRequest) } }
+                .onFailure {
+                    VideoExportCoordinator.publish(
+                        applicationContext,
+                        VideoExportSnapshot(
+                            status = VideoExportStatus.FAILED,
+                            title = retryRequest.title,
+                            errorMessage = getString(R.string.video_request_unavailable),
+                        ),
+                    )
+                }
+        } else {
+            createVideo.launch("${generatedMedia.fileBaseName(request.title, request.journey.period)}.mp4")
+        }
     }
 
     private fun formatRemainingTime(seconds: Int): String = if (seconds < 90) {
@@ -1539,8 +2036,6 @@ class MainActivity : AppCompatActivity() {
         val editingEnabled = !exporting && !loading
         val canCreate = editingEnabled && editor.timelineView.isCameraReady &&
             renderTimeline != null && journey?.let(::canCreateVideo) == true
-        editor.exportProgress.visibility = if (exporting) View.VISIBLE else View.GONE
-        editor.cancelExportButton.visibility = if (exporting) View.VISIBLE else View.GONE
         home.deleteAllVideosButton.isEnabled = !exporting
         editor.importButton.isEnabled = editingEnabled
         editor.safeSharingSwitch.isEnabled = editingEnabled && timeline != null
@@ -1548,7 +2043,7 @@ class MainActivity : AppCompatActivity() {
         editor.privateAreaRadiusDropdown.isEnabled = editingEnabled && timeline != null
         editor.exportHelpButton.isEnabled = editingEnabled
         editor.playButton.isEnabled = canCreate
-        editor.exportButton.isEnabled = canCreate
+        editor.exportButton.isEnabled = canCreate && videoFormatSupported
         editor.shareButton.isEnabled = !exporting
         editor.watchVideoButton.isEnabled = !exporting
         editor.createAnotherButton.isEnabled = !exporting
@@ -1562,6 +2057,8 @@ class MainActivity : AppCompatActivity() {
         editor.startMonthDropdown.isEnabled = editingEnabled
         editor.endMonthDropdown.isEnabled = editingEnabled
         editor.exactDateSwitch.isEnabled = editingEnabled
+        editor.rawSignalsSwitch.isEnabled = editingEnabled
+        editor.rawAccuracyInput.isEnabled = editingEnabled
         editor.exactDateRangeButton.isEnabled = editingEnabled
         editor.ownerInput.isEnabled = !exporting
         editor.titleInput.isEnabled = !exporting
@@ -2016,12 +2513,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun currentRenderText(): RenderText {
         val locale = resources.configuration.locales[0] ?: Locale.getDefault()
+        val distanceUnit = resolvedDistanceUnit()
         return RenderText(
             localeTag = locale.toLanguageTag(),
             fallbackTitle = getString(R.string.default_title),
             datePattern = getString(R.string.render_date_pattern),
-            distanceUnit = getString(R.string.distance_unit),
+            distanceUnit = distanceUnit.symbol,
             attribution = getString(R.string.map_attribution),
+            distanceScale = distanceUnit.kilometersMultiplier,
         )
     }
 
@@ -2073,6 +2572,16 @@ class MainActivity : AppCompatActivity() {
 
     internal fun pendingExportDurationSeconds(): Int? = pendingExport?.durationSeconds
 
+    internal fun installedVersionLabel(): String =
+        getString(R.string.app_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
+
+    private fun currentApplicationLanguageTags(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getSystemService(LocaleManager::class.java).applicationLocales.toLanguageTags()
+        } else {
+            AppCompatDelegate.getApplicationLocales().toLanguageTags()
+        }
+
     private fun makeDropdownOpenReliably(dropdown: AutoCompleteTextView) {
         dropdown.threshold = 0
         dropdown.setOnClickListener { dropdown.showDropDown() }
@@ -2085,6 +2594,12 @@ class MainActivity : AppCompatActivity() {
         val render: Timeline,
         val initialJourney: Journey,
         val ignoredCount: Int,
+        val availablePrivacyCities: List<PublicPlace>,
+    )
+
+    private data class PreparedRawSignals(
+        val processing: RawSignalProcessingResult,
+        val renderPoints: List<GeoPoint>,
         val availablePrivacyCities: List<PublicPlace>,
     )
 
@@ -2106,6 +2621,9 @@ class MainActivity : AppCompatActivity() {
     )
 
     companion object {
+        private const val GOOGLE_MAPS_PACKAGE = "com.google.android.apps.maps"
+        private const val GOOGLE_TIMELINE_HELP_URL =
+            "https://support.google.com/maps/answer/6258979?co=GENIE.Platform%3DAndroid"
         private const val TITLE_UPDATE_DELAY_MS = 450L
         private const val COLLAPSED_CREATION_COUNT = 3
         private const val MAP_PRIVACY_ACCEPTED = "map_privacy_accepted_v1"

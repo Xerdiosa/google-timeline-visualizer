@@ -167,13 +167,17 @@ class VideoExportService : Service() {
         } catch (error: Throwable) {
             Log.e(TAG, "Video export failed", error)
             GeneratedMediaRepository(applicationContext).discard(uri)
-            requestStore.clear()
-            finishWithFailure(request, getString(R.string.video_export_failed), startId)
+            finishWithFailure(request, failureMessage(error), startId)
             return
         } finally {
             exportJob = null
             stopSelf(startId)
         }
+    }
+
+    private fun failureMessage(error: Throwable): String = when (error) {
+        is UnsupportedVideoFormatException -> error.reason.describe(this, error.format)
+        else -> getString(R.string.video_export_failed)
     }
 
     private fun cancelExport(startId: Int) {
@@ -200,7 +204,7 @@ class VideoExportService : Service() {
     }
 
     private fun finishWithFailure(request: VideoExportRequest?, message: String, startId: Int) {
-        requestStore.clear()
+        if (request == null) requestStore.clear()
         publish(
             VideoExportSnapshot(
                 status = VideoExportStatus.FAILED,

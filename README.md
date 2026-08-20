@@ -13,12 +13,29 @@ exact dates, preview the Journey, and create an MP4 ready to watch or share.
 ![License](https://img.shields.io/github/license/mahlernim/google-timeline-visualizer)
 ![Build](https://github.com/mahlernim/google-timeline-visualizer/actions/workflows/validate.yml/badge.svg)
 
+## Use on iPhone
+
+Open the [iPhone web app](https://ahn-lab.org/google-timeline-visualizer/)
+in Safari. There is no app to install and no Timeline file is uploaded.
+
+1. In Google Maps, open **profile picture → Settings → Personal content →
+   Export Timeline data** and save `Timeline.json` in Files.
+2. Return to the web app and select **Choose Timeline.json**.
+3. Choose a month range or exact dates, select the camera movement, and confirm
+   the map privacy notice.
+4. Preview the journey, then select **Create MP4**.
+5. Play, share, or download the finished video.
+
+MP4 creation requires Safari 16.4 or newer with H.264 encoding support. Keep the
+tab open while the video is being created. To keep the web app on the Home Screen,
+use Safari's Share menu and choose **Add to Home Screen**.
+
 ## Install on Android
 
 The app is not yet on Google Play. Install it from this repository's
 [latest release](https://github.com/mahlernim/google-timeline-visualizer/releases/latest):
 
-1. Under **Assets**, download `TimelineVisualizer-v2.1.3.apk` on your phone.
+1. Under **Assets**, download `TimelineVisualizer-v2.2.4.apk` on your phone.
 2. Open the downloaded file.
 3. If Android blocks the installation, select **Settings**, allow your browser or
    file manager to **Install unknown apps**, then return and try again.
@@ -46,8 +63,9 @@ Names and menu locations can vary by phone. In Timeline Visualizer, **Get Timeli
 shows these instructions and can open Location settings for you. Android does not
 provide apps with a standard link directly to the Timeline page.
 
-On iPhone, use **Google Maps → profile picture → Settings → Personal content →
-Export Timeline data**, then move the JSON file to your Android phone.
+On iPhone, the exported JSON can be used directly in the
+[iPhone web app](https://ahn-lab.org/google-timeline-visualizer/). It can also
+be moved to an Android phone and opened in the Android app.
 
 ## Restore a missing Google Maps Timeline
 
@@ -117,9 +135,9 @@ navigation keeps **My videos**, **Create video**, and **Settings** easy to reach
 **Settings** controls defaults for every new video. Steady camera and Balanced
 long-trip compression are the defaults. Fixed camera keeps one zoom level, while
 Dynamic camera follows local movement more actively. Long-trip compression changes
-only animation timing and never route geometry. Video quality offers the original
-480p output plus 720p and 1080p options. Restore defaults returns all video settings
-to the recommended values.
+only animation timing and never route geometry. Video format offers square 480p,
+720p, and 1080p output plus portrait 1080 × 1920 and landscape 1920 × 1080 presets.
+Restore defaults returns all video settings to the recommended values.
 
 Timeline processing uses Conservative GPS outlier filtering by default. It ignores
 only isolated, implausible out-and-back coordinates, reports the number ignored,
@@ -137,7 +155,8 @@ locally and the original Timeline JSON is not changed. Unselected places remain
 precise, so preview the complete route before sharing it publicly.
 
 The app supports English, Korean, Japanese, Simplified Chinese, Traditional Chinese,
-Spanish, French, German, and Brazilian Portuguese.
+Spanish, French, German, and Brazilian Portuguese. Choose any supported language in
+Settings or keep System default. Settings also shows the installed version and build code.
 
 Long flights and other sparse routes are interpolated along a great-circle path,
 so the camera follows the trip smoothly instead of jumping to the destination.
@@ -149,6 +168,7 @@ without changing or removing any Timeline points.
 
 - Current Android and iOS direct-array Timeline exports
 - Older `{ "semanticSegments": [...] }` exports
+- Optional raw location fallback with a warning and local noise reduction
 - Timeline paths, activities, and visits
 - String, `latLng`, degree, `geo:`, and E7 coordinates
 - Routes crossing the international date line

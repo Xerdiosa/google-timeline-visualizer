@@ -11,3 +11,4 @@ Timeline.json
 *.mp4
 __pycache__/
 .pytest_cache/
+/local-fixtures/

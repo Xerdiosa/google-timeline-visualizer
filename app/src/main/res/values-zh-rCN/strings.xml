@@ -25,7 +25,7 @@
     <string name="import_failed_detail">无法读取该文件。选择支持的 Timeline JSON 导出。</string>
     <string name="timeline_error_malformed">此文件不是有效或完整的 JSON。</string>
     <string name="timeline_error_legacy">这是旧版 Google Takeout 格式。请改为从手机导出 Timeline 数据。</string>
-    <string name="timeline_error_raw_only">此导出仅包含原始信号，没有重建的 Timeline 行程。</string>
+    <string name="timeline_error_raw_only">此文件不包含可用的访问地点、行程或原始位置信息。</string>
     <string name="timeline_error_no_locations">此 Timeline 导出不包含位置数据。Timeline 可能未启用，因此 Google 没有可导出的数据。</string>
     <string name="remembered_timeline_unavailable">之前使用的Timeline不再可用。</string>
     <string name="choose_timeline_again">再次选择 Timeline.json 文件。</string>
@@ -55,6 +55,7 @@
     <string name="cancel_video_creation">取消视频创建</string>
     <string name="video_creation_cancelled">视频创作已取消</string>
     <string name="cancel">取消</string>
+    <string name="retry">重试</string>
     <string name="not_now">现在不要</string>
     <string name="background_video_title">继续在后台创建</string>
     <string name="background_video_message">允许通知在离开应用程序后查看视频进度，并在视频准备就绪时收到提醒。即使不允许通知，视频创建也会继续。</string>
@@ -64,7 +65,6 @@
     <string name="video_creation_notification_channel">视频创作</string>
     <string name="video_creation_notification_channel_description">timeline 视频的进度和完成提醒</string>
     <string name="no_video_player">没有可用的应用程序来播放该视频</string>
-    <string name="journey_summary">%1$s 分 · %2$s km · %3$s</string>
     <string name="period_same_year">%1$s–%2$s %3$d</string>
     <string name="period_cross_year">%1$s %2$d–%3$s %4$d</string>
     <string name="preparing_map_progress">准备地图·%1$d/%2$d</string>
@@ -122,7 +122,6 @@
     <string name="update_page_unavailable">无法打开更新页面</string>
     <string name="web_page_unavailable">无法打开网页</string>
     <string name="render_date_pattern" tools:ignore="ExtraTranslation">yyyy年M月</string>
-    <string name="distance_unit">km</string>
     <string name="map_attribution">© OpenStreetMap © CARTO</string>
     <string name="timeline_video">Timeline视频</string>
     <string name="default_video_filename">Timeline 视频.mp4</string>
@@ -159,7 +158,7 @@
     <string name="no_videos">您创建或添加的视频将显示在此处。</string>
     <string name="show_all_videos">显示全部 (%1$d)</string>
     <string name="show_fewer_videos">显示较少</string>
-    <string name="selected_period_summary">%1$s 积分 · 关于 %2$s km · %3$s</string>
+    <string name="selected_period_summary">%1$s 个点 · 约 %2$s %3$s · %4$s</string>
     <string name="selected_period_empty">此期间没有位置点</string>
     <string name="selected_period_one_point">1个位置点·选择范围更广</string>
     <string name="selected_period_no_movement">%1$s 点 · 未检测到移动</string>
@@ -168,7 +167,7 @@
     <string name="save_as_failed">无法保存视频的副本</string>
     <string name="video_copy_saved">视频副本已保存</string>
     <string name="advanced_settings">高级设置</string>
-    <string name="advanced_settings_summary">选择相机移动、长途拍摄时间和导出质量。</string>
+    <string name="advanced_settings_summary">选择相机移动、长途拍摄时间和导出格式。</string>
     <string name="camera_movement">镜头移动</string>
     <string name="camera_fixed">固定</string>
     <string name="camera_steady">平稳</string>
@@ -195,13 +194,26 @@
     <string name="compression_gentle">温柔·0.92</string>
     <string name="compression_balanced">均衡 · 0.85</string>
     <string name="compression_strong">强·0.75</string>
-    <string name="video_quality">视频画质</string>
-    <string name="quality_standard">标准·480p</string>
-    <string name="quality_high">高·720p</string>
-    <string name="quality_ultra">超·1080p</string>
+    <string name="video_format">视频格式</string>
+    <string name="format_square_480">正方形·480p</string>
+    <string name="format_square_720">正方形·720p</string>
+    <string name="format_square_1080">正方形·1080p</string>
+    <string name="format_portrait_1080">竖屏·1080×1920</string>
+    <string name="format_landscape_1080">横屏·1920×1080</string>
+    <string name="format_not_supported">此设备无法制作 %1$d×%2$d 的视频。请选择其他格式。</string>
     <string name="restore_advanced_defaults">恢复默认设置</string>
     <string name="advanced_defaults_restored">高级设置已恢复</string>
     <string name="use_exact_dates">选择具体日期</string>
+    <string name="use_raw_location_data">使用原始位置数据</string>
+    <string name="raw_location_description">使用近期未经处理的位置估算。系统会减少噪声，但路线和距离仍可能不准确。</string>
+    <string name="raw_accuracy_limit">精度上限（米）</string>
+    <string name="raw_accuracy_helper">精度较低的位置会被排除。留空可包含所有可用位置。</string>
+    <string name="raw_accuracy_invalid">请输入零或正数，或者留空。</string>
+    <string name="raw_location_summary">%1$s 个位置 · 估算 %2$s %3$s · 已排除 %4$s 个</string>
+    <string name="raw_only_title">仅发现原始位置数据</string>
+    <string name="raw_only_message">此文件包含原始位置数据，但没有经过处理的到访记录或行程。你可以继续，但路线可能不准确或不完整，距离也只是估算值。\n\n为了获得更好的结果，请打开 Google 地图，确认或恢复你的时间轴，并确保其中显示到访记录和行程。然后再次导出时间轴，并在此应用中加载新文件。</string>
+    <string name="open_google_maps">打开 Google 地图</string>
+    <string name="continue_with_raw_data">使用原始数据继续</string>
     <string name="choose_exact_dates">选择开始和结束日期</string>
     <string name="exact_date_range">%1$s – %2$s</string>
     <string name="delete_all_videos">删除所有视频</string>
@@ -214,6 +226,11 @@
     <string name="settings_summary">设置用于预览和新视频的默认值。</string>
     <string name="video_defaults">视频默认值</string>
     <string name="video_defaults_summary">更改适用于预览和您创建的下一个视频。</string>
+    <string name="distance_unit_setting">距离单位</string>
+    <string name="distance_unit_automatic">自动</string>
+    <string name="distance_unit_kilometers">公里</string>
+    <string name="distance_unit_miles">英里</string>
+    <string name="distance_unit_automatic_resolved">%1$s · %2$s</string>
     <string name="timeline_processing">时间轴处理</string>
     <string name="location_filter">GPS异常点过滤</string>
     <string name="location_filter_summary">保守过滤仅忽略短时间内不可能的往返移动。不会更改您的时间轴文件。</string>
@@ -224,6 +241,10 @@
         <item quantity="other">已忽略%1$d个可疑位置</item>
     </plurals>
     <string name="about_and_privacy">关于和隐私</string>
+    <string name="language">语言</string>
+    <string name="language_summary">选择 Timeline Visualizer 使用的语言。系统默认设置会跟随设备或 Android 应用语言设置。</string>
+    <string name="language_system_default">系统默认</string>
+    <string name="app_version">版本 %1$s（%2$d）</string>
     <string name="video_playback_failed">该视频无法在Timeline Visualizer内播放。</string>
     <string name="open_in_another_app">在其他应用中打开</string>
 </resources>

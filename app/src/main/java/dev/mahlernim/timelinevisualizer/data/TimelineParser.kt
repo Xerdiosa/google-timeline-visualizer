@@ -1,5 +1,6 @@
 package dev.mahlernim.timelinevisualizer.data
 
+import com.google.gson.Strictness
 import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
 import com.google.gson.stream.MalformedJsonException
@@ -13,8 +14,16 @@ import java.time.OffsetDateTime
 import java.time.format.DateTimeParseException
 
 class TimelineParser {
-    fun parse(input: InputStream): Timeline = try {
-        parseSupportedTimeline(input)
+    fun parse(input: InputStream): Timeline = parseDocument(input, includeRawSignals = false).timeline
+        ?: throw TimelineParseException(
+            TimelineParseReason.RAW_SIGNALS_ONLY,
+            "This export contains raw signals but no usable semantic Timeline",
+        )
+
+    fun parseWithRawSignals(input: InputStream): ParsedTimeline = parseDocument(input, includeRawSignals = true)
+
+    private fun parseDocument(input: InputStream, includeRawSignals: Boolean): ParsedTimeline = try {
+        parseSupportedTimeline(input, includeRawSignals)
     } catch (error: TimelineParseException) {
         throw error
     } catch (error: MalformedJsonException) {
@@ -25,10 +34,14 @@ class TimelineParser {
         throw TimelineParseException(TimelineParseReason.MALFORMED_JSON, "Timeline JSON has an invalid structure", error)
     }
 
-    private fun parseSupportedTimeline(input: InputStream): Timeline {
-        val points = mutableListOf<GeoPoint>()
+    private fun parseSupportedTimeline(input: InputStream, includeRawSignals: Boolean): ParsedTimeline {
+        val canonicalPoints = mutableListOf<GeoPoint>()
+        val standalonePathPoints = mutableListOf<GeoPoint>()
+        val semanticIntervals = mutableListOf<TimeInterval>()
+        val rawSignalPoints = mutableListOf<RawSignalPoint>()
+        var rootContents = RootContents(foundSegments = true)
         JsonReader(InputStreamReader(input, Charsets.UTF_8)).use { reader ->
-            reader.isLenient = true
+            reader.strictness = Strictness.LENIENT
             val rootToken = try {
                 reader.peek()
             } catch (_: EOFException) {
@@ -38,8 +51,19 @@ class TimelineParser {
                 )
             }
             when (rootToken) {
-                JsonToken.BEGIN_ARRAY -> readSegments(reader, points)
-                JsonToken.BEGIN_OBJECT -> readRootObject(reader, points)
+                JsonToken.BEGIN_ARRAY -> readSegments(
+                    reader,
+                    canonicalPoints,
+                    standalonePathPoints,
+                    semanticIntervals,
+                )
+                JsonToken.BEGIN_OBJECT -> rootContents = readRootObject(
+                    reader,
+                    canonicalPoints,
+                    standalonePathPoints,
+                    semanticIntervals,
+                    rawSignalPoints.takeIf { includeRawSignals },
+                )
                 else -> throw TimelineParseException(
                     TimelineParseReason.UNSUPPORTED_FORMAT,
                     "Timeline JSON must start with an object or array",
@@ -47,15 +71,93 @@ class TimelineParser {
             }
         }
 
+        val points = reconcileStandalonePaths(canonicalPoints, standalonePathPoints, semanticIntervals)
         val normalized = normalize(points)
+        val normalizedRawSignals = normalizeRawSignals(rawSignalPoints)
 
         if (normalized.isEmpty()) {
+            if (normalizedRawSignals.isNotEmpty()) {
+                return ParsedTimeline(timeline = null, rawSignals = normalizedRawSignals)
+            }
+            if (rootContents.foundLegacyFormat) {
+                throw TimelineParseException(
+                    TimelineParseReason.LEGACY_FORMAT,
+                    "This JSON uses an older unsupported Timeline format",
+                )
+            }
+            if (rootContents.foundRawSignals && !rootContents.foundSegments) {
+                throw TimelineParseException(
+                    TimelineParseReason.RAW_SIGNALS_ONLY,
+                    "This export contains raw signals but no usable position records",
+                )
+            }
             throw TimelineParseException(
                 TimelineParseReason.NO_USABLE_LOCATIONS,
                 "No supported location points were found in this export",
             )
         }
-        return Timeline(normalized)
+        return ParsedTimeline(
+            timeline = Timeline(normalized),
+            rawSignals = normalizedRawSignals,
+        )
+    }
+
+    private fun normalizeRawSignals(points: MutableList<RawSignalPoint>): List<RawSignalPoint> {
+        points.sortWith(compareBy { it.point.instant })
+        val unique = LinkedHashMap<RawSignalKey, RawSignalPoint>(points.size)
+        points.forEach { candidate ->
+            val key = RawSignalKey(
+                candidate.point.instant.toEpochMilli(),
+                candidate.point.latitude.toBits(),
+                candidate.point.longitude.toBits(),
+            )
+            val previous = unique[key]
+            if (previous == null || candidate.accuracyMeters < previous.accuracyMeters) {
+                unique[key] = candidate
+            }
+        }
+        return unique.values.toList()
+    }
+
+    private fun reconcileStandalonePaths(
+        canonicalPoints: MutableList<GeoPoint>,
+        standalonePathPoints: MutableList<GeoPoint>,
+        semanticIntervals: MutableList<TimeInterval>,
+    ): MutableList<GeoPoint> {
+        // Some direct-array exports append an independent path-only history for the same
+        // periods already represented by activity and visit segments. Keep paths that are
+        // attached to their semantic segment, but do not flatten the second history into it.
+        if (standalonePathPoints.isEmpty()) return canonicalPoints
+        if (semanticIntervals.isEmpty()) {
+            canonicalPoints += standalonePathPoints
+            return canonicalPoints
+        }
+
+        semanticIntervals.sortBy(TimeInterval::start)
+        val mergedIntervals = ArrayList<TimeInterval>(semanticIntervals.size)
+        semanticIntervals.forEach { interval ->
+            val previous = mergedIntervals.lastOrNull()
+            if (previous == null || interval.start.isAfter(previous.end)) {
+                mergedIntervals += interval
+            } else if (interval.end.isAfter(previous.end)) {
+                mergedIntervals[mergedIntervals.lastIndex] = previous.copy(end = interval.end)
+            }
+        }
+
+        standalonePathPoints.sortBy(GeoPoint::instant)
+        var intervalIndex = 0
+        standalonePathPoints.forEach { point ->
+            while (
+                intervalIndex < mergedIntervals.size &&
+                mergedIntervals[intervalIndex].end.isBefore(point.instant)
+            ) {
+                intervalIndex += 1
+            }
+            val covered = intervalIndex < mergedIntervals.size &&
+                !point.instant.isBefore(mergedIntervals[intervalIndex].start)
+            if (!covered) canonicalPoints += point
+        }
+        return canonicalPoints
     }
 
     private fun normalize(points: MutableList<GeoPoint>): List<GeoPoint> {
@@ -112,7 +214,13 @@ class TimelineParser {
         return points
     }
 
-    private fun readRootObject(reader: JsonReader, points: MutableList<GeoPoint>) {
+    private fun readRootObject(
+        reader: JsonReader,
+        canonicalPoints: MutableList<GeoPoint>,
+        standalonePathPoints: MutableList<GeoPoint>,
+        semanticIntervals: MutableList<TimeInterval>,
+        rawSignalPoints: MutableList<RawSignalPoint>?,
+    ): RootContents {
         var foundSegments = false
         var foundRawSignals = false
         var foundLegacyFormat = false
@@ -121,11 +229,11 @@ class TimelineParser {
             when (reader.nextName()) {
                 "semanticSegments" -> {
                     foundSegments = true
-                    readSegments(reader, points)
+                    readSegments(reader, canonicalPoints, standalonePathPoints, semanticIntervals)
                 }
                 "rawSignals" -> {
                     foundRawSignals = true
-                    reader.skipValue()
+                    if (rawSignalPoints != null) readRawSignals(reader, rawSignalPoints) else reader.skipValue()
                 }
                 "timelineObjects", "locations" -> {
                     foundLegacyFormat = true
@@ -135,31 +243,95 @@ class TimelineParser {
             }
         }
         reader.endObject()
-        if (!foundSegments) {
-            val reason = when {
-                foundLegacyFormat -> TimelineParseReason.LEGACY_FORMAT
-                foundRawSignals -> TimelineParseReason.RAW_SIGNALS_ONLY
-                else -> TimelineParseReason.UNSUPPORTED_FORMAT
-            }
-            throw TimelineParseException(reason, "This JSON does not contain semanticSegments")
+        if (!foundSegments && !foundRawSignals && !foundLegacyFormat) {
+            throw TimelineParseException(
+                TimelineParseReason.UNSUPPORTED_FORMAT,
+                "This JSON does not contain supported Timeline data",
+            )
         }
+        return RootContents(foundSegments, foundRawSignals, foundLegacyFormat)
     }
 
-    private fun readSegments(reader: JsonReader, points: MutableList<GeoPoint>) {
+    private fun readRawSignals(reader: JsonReader, output: MutableList<RawSignalPoint>) {
+        if (reader.peek() != JsonToken.BEGIN_ARRAY) {
+            reader.skipValue()
+            return
+        }
         reader.beginArray()
         while (reader.hasNext()) {
-            if (reader.peek() == JsonToken.BEGIN_OBJECT) readSegment(reader, points) else reader.skipValue()
+            if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+                reader.skipValue()
+                continue
+            }
+            var point: RawSignalPoint? = null
+            reader.beginObject()
+            while (reader.hasNext()) {
+                if (reader.nextName() == "position") point = readRawPosition(reader) else reader.skipValue()
+            }
+            reader.endObject()
+            point?.let(output::add)
         }
         reader.endArray()
     }
 
-    private fun readSegment(reader: JsonReader, output: MutableList<GeoPoint>) {
+    private fun readRawPosition(reader: JsonReader): RawSignalPoint? {
+        if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+            reader.skipValue()
+            return null
+        }
+        var coordinate: String? = null
+        var timestamp: String? = null
+        var accuracyMeters: Double? = null
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "LatLng", "latLng" -> coordinate = reader.readStringOrNull()
+                "timestamp" -> timestamp = reader.readStringOrNull()
+                "accuracyMeters" -> accuracyMeters = reader.readDoubleOrNull()
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+        if (accuracyMeters == null || !accuracyMeters.isFinite() || accuracyMeters < 0.0) return null
+        val instant = parseInstant(timestamp) ?: return null
+        val parsedCoordinate = parseCoordinate(coordinate) ?: return null
+        return RawSignalPoint(
+            point = GeoPoint(instant, parsedCoordinate.first, parsedCoordinate.second),
+            accuracyMeters = accuracyMeters,
+        )
+    }
+
+    private fun readSegments(
+        reader: JsonReader,
+        canonicalPoints: MutableList<GeoPoint>,
+        standalonePathPoints: MutableList<GeoPoint>,
+        semanticIntervals: MutableList<TimeInterval>,
+    ) {
+        reader.beginArray()
+        while (reader.hasNext()) {
+            if (reader.peek() == JsonToken.BEGIN_OBJECT) {
+                readSegment(reader, canonicalPoints, standalonePathPoints, semanticIntervals)
+            } else {
+                reader.skipValue()
+            }
+        }
+        reader.endArray()
+    }
+
+    private fun readSegment(
+        reader: JsonReader,
+        canonicalPoints: MutableList<GeoPoint>,
+        standalonePathPoints: MutableList<GeoPoint>,
+        semanticIntervals: MutableList<TimeInterval>,
+    ) {
         var startTime: String? = null
         var endTime: String? = null
         var visitLocation: String? = null
         var activityStart: String? = null
         var activityEnd: String? = null
         var isFlying = false
+        var hasVisit = false
+        var hasActivity = false
         val path = mutableListOf<TimedCoordinate>()
 
         reader.beginObject()
@@ -168,8 +340,12 @@ class TimelineParser {
                 "startTime" -> startTime = reader.readStringOrNull()
                 "endTime" -> endTime = reader.readStringOrNull()
                 "timelinePath" -> readTimelinePath(reader, path)
-                "visit" -> visitLocation = readVisit(reader)
+                "visit" -> {
+                    hasVisit = true
+                    visitLocation = readVisit(reader)
+                }
                 "activity" -> {
+                    hasActivity = true
                     val activity = readActivity(reader)
                     activityStart = activity.start
                     activityEnd = activity.end
@@ -180,18 +356,34 @@ class TimelineParser {
         }
         reader.endObject()
 
+        val startInstant = parseInstant(startTime)
+        val endInstant = parseInstant(endTime)
+        val pathPoints = ArrayList<GeoPoint>(path.size)
         path.forEach { timed ->
             val instant = parseInstant(timed.time)
                 ?: parseOffsetInstant(startTime, endTime, timed.offsetMinutes)
             val coordinate = parseCoordinate(timed.coordinate)
             if (instant != null && coordinate != null) {
-                output += GeoPoint(instant, coordinate.first, coordinate.second, isFlying)
+                pathPoints += GeoPoint(instant, coordinate.first, coordinate.second, isFlying)
             }
         }
 
-        addPoint(output, startTime, visitLocation)
-        addPoint(output, startTime, activityStart, isFlying)
-        addPoint(output, endTime, activityEnd, isFlying)
+        val semanticPoints = ArrayList<GeoPoint>(3)
+        addPoint(semanticPoints, startInstant, visitLocation)
+        addPoint(semanticPoints, startInstant, activityStart, isFlying)
+        addPoint(semanticPoints, endInstant, activityEnd, isFlying)
+        val hasUsableSemanticRecord = (hasVisit || hasActivity) && semanticPoints.isNotEmpty()
+
+        if (hasUsableSemanticRecord) {
+            canonicalPoints += pathPoints
+            canonicalPoints += semanticPoints
+            if (startInstant != null && endInstant != null && !endInstant.isBefore(startInstant)) {
+                semanticIntervals += TimeInterval(startInstant, endInstant)
+            }
+        } else {
+            standalonePathPoints += pathPoints
+            canonicalPoints += semanticPoints
+        }
     }
 
     private fun readTimelinePath(reader: JsonReader, output: MutableList<TimedCoordinate>) {
@@ -329,13 +521,24 @@ class TimelineParser {
         }
     }
 
+    private fun JsonReader.readDoubleOrNull(): Double? = when (peek()) {
+        JsonToken.STRING, JsonToken.NUMBER -> nextString().toDoubleOrNull()
+        JsonToken.NULL -> {
+            nextNull()
+            null
+        }
+        else -> {
+            skipValue()
+            null
+        }
+    }
+
     private fun addPoint(
         output: MutableList<GeoPoint>,
-        time: String?,
+        instant: Instant?,
         rawCoordinate: String?,
         isFlying: Boolean = false,
     ) {
-        val instant = parseInstant(time)
         val coordinate = parseCoordinate(rawCoordinate)
         if (instant != null && coordinate != null) {
             output += GeoPoint(instant, coordinate.first, coordinate.second, isFlying)
@@ -397,10 +600,37 @@ class TimelineParser {
         val type: String? = null,
     )
 
+    private data class TimeInterval(
+        val start: Instant,
+        val end: Instant,
+    )
+
+    private data class RootContents(
+        val foundSegments: Boolean,
+        val foundRawSignals: Boolean = false,
+        val foundLegacyFormat: Boolean = false,
+    )
+
+    private data class RawSignalKey(
+        val epochMillis: Long,
+        val latitudeBits: Long,
+        val longitudeBits: Long,
+    )
+
     private companion object {
         const val FLYING_ACTIVITY_TYPE = "FLYING"
     }
 }
+
+data class ParsedTimeline(
+    val timeline: Timeline?,
+    val rawSignals: List<RawSignalPoint>,
+)
+
+data class RawSignalPoint(
+    val point: GeoPoint,
+    val accuracyMeters: Double,
+)
 
 enum class TimelineParseReason {
     MALFORMED_JSON,
